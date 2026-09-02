@@ -1,0 +1,41 @@
+# ── Secrets and credentials ────────────────────────────────
+# OPNsense config exports contain password hashes and private keys.
+*.xml
+config-backup*
+*.key
+*.pfx
+*.pem
+*.crt
+*.p12
+secrets/
+vault_pass*
+*_rsa
+*_ed25519
+.env
+credentials*
+
+# ── Ansible ───────────────────────────────────────────────
+*.retry
+inventory-prod*
+host_vars/*/vault.yml
+group_vars/*/vault.yml
+
+# ── Virtual machine and media artifacts ───────────────────
+*.vmdk
+*.vmx
+*.iso
+*.ova
+*.nvram
+*.vmsd
+*.vmsn
+*.7z
+
+# ── Scan output that may contain host detail ──────────────
+evidence/**/*.raw
+*.pcap
+*.pcapng
+
+# ── OS noise ──────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
