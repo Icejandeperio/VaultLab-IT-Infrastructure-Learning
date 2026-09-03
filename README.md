@@ -21,7 +21,7 @@ graph TD
     FW -->|em4| RED[RED · 10.10.40.0/24]
     FW -->|em5| DMZ[DMZ · 10.10.99.0/24]
 
-    CORE --> DC01[DC01 · 10.10.10.10<br/>Windows Server 2025 Core<br/>AD DS / DNS]
+    CORE --> DC01[DC01 · 10.10.10.10<br/>Windows Server 2025 Core<br/>AD DS · DNS · PDC · KDC]
     CORE -.planned.-> SRV01[SRV01 · 10.10.10.11]
     CLIENT -.planned.-> WS01[WS01 · DHCP]
     SEC -.planned.-> SIEM01[SIEM01 · 10.10.30.20<br/>Wazuh]
@@ -50,8 +50,10 @@ Usable VM budget after host overhead: **~16 GB**. See [`docs/resource-budget.md`
 | Virtual network fabric | Complete | VMnet2–VMnet6, DHCP disabled, host adapter on CORE only |
 | FW01 — OPNsense | Complete | 6 interfaces, routing, NAT, DNS, DHCP, DMZ isolation |
 | DC01 — base OS | Complete | Server Core, activated, networked, renamed |
-| DC01 — AD DS promotion | Not started | Next |
-| WS01 — Windows 11 client | Not started | |
+| DC01 — AD DS promotion | Complete | Forest `corp.vaultlab.net`, functional level Windows2025 |
+| DC01 — DNS and time | Complete | Self-reference, forwarder, reverse zone, NTP from FW01 |
+| DC01 — OU structure | Complete | VAULTLAB OU tree, split admin accounts |
+| WS01 — Windows 11 client | Not started | **Next** |
 | SIEM01 — Wazuh | Not started | |
 | Segmentation hardening | Not started | Temporary allow-all rules in place |
 
