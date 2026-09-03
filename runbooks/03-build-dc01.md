@@ -2,7 +2,7 @@
 
 **Result:** An activated, correctly addressed domain controller hosting `corp.vaultlab.net`
 
-**Status:** Sections 1–5 complete. Section 6 (promotion) pending.
+**Status:** Sections 1–8 complete. DC01 is a working domain controller.
 
 Do not install Windows Server until ready to build. The 180-day clock starts at
 installation, not first use. See `docs/licensing-clock.md`.
@@ -116,40 +116,195 @@ If `/ato` returns `0xC004E028`, a request is already in flight — wait, then ch
 Rename-Computer -NewName DC01 -Restart
 ```
 
-Rename **before** promotion. A DC's name is embedded in the AD database, DNS SRV
-records, and Kerberos SPNs; renaming afterward is a substantial operation.
+> ### GATE — do not proceed until this passes
+>
+> ```powershell
+> hostname
+> ```
+>
+> **Must return `DC01`.** If it returns anything else, rename again and reboot.
+>
+> `Rename-Computer` reports no error when it fails to take. Promoting an
+> unrenamed machine embeds the auto-generated hostname into the FSMO role
+> assignments, the `_msdcs` SRV records, and every Kerberos SPN. Recovering
+> costs a snapshot revert and a second promotion.
+>
+> See `docs/troubleshooting-log.md`, entry 08.
 
 Snapshot: `02-dc01-base`.
 
-## 6. Promotion — pending
+## 6. Promotion
 
 ```powershell
 Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
+Get-WindowsFeature AD-Domain-Services      # confirm Installed before continuing
+```
 
+That installs the binaries only. The server is still standalone.
+
+```powershell
 Install-ADDSForest -DomainName "corp.vaultlab.net" -DomainNetbiosName "VAULTLAB" -InstallDns -Force
 ```
 
-Record the DSRM password. Losing it costs the forest.
+| Parameter | Why |
+|---|---|
+| `-DomainName` | Forest root namespace. Permanent — see ADR-003. |
+| `-DomainNetbiosName` | Would default to `CORP` from the first label. `VAULTLAB\jcruz` is more meaningful at a login prompt. |
+| `-InstallDns` | AD is unusable without DNS. Clients locate DCs via SRV records such as `_ldap._tcp.dc._msdcs.corp.vaultlab.net`, not by address. |
+| `-Force` | Suppresses confirmations. DSRM is still prompted. |
 
-## 7. Post-promotion — pending
+**DSRM password.** Directory Services Restore Mode is the escape hatch when AD
+itself will not start — the local Administrator identity no longer exists
+independently once promoted, so this is the only way into a broken DC. Record it,
+and make it different from the Administrator password. Losing it costs the forest.
+
+Two delegation warnings are expected: there is no parent `vaultlab.net` zone to
+create a delegation record in, because the domain is not registered. The warning
+text says so.
+
+Reboots automatically. Log in as **`VAULTLAB\Administrator`**.
+
+**Verify the promotion landed under the right name:**
+
+```powershell
+Get-ADDomain | Select-Object DNSRoot, NetBIOSName, PDCEmulator, RIDMaster, InfrastructureMaster
+```
+
+All three FSMO holders must read `DC01.corp.vaultlab.net`.
+
+## 7. Post-promotion
+
+### DNS self-reference
 
 ```powershell
 Set-DnsClientServerAddress -InterfaceAlias "Ethernet0" -ServerAddresses 127.0.0.1
-Set-DnsServerForwarder -IPAddress 10.10.10.1 -PassThru
-Add-DnsServerPrimaryZone -NetworkID "10.10.10.0/24" -ReplicationScope Domain
-
-w32tm /config /manualpeerlist:"10.10.10.1,0x8" /syncfromflags:manual /reliable:yes /update
-Restart-Service w32time
-
-dcdiag /v
 ```
 
-`dcdiag` must pass every test before continuing to WS01.
+DC01 is now authoritative for `corp.vaultlab.net`; FW01 knows nothing about that
+zone. A DC resolving through someone else can fail to find its own SRV records.
+
+`127.0.0.1` rather than `10.10.10.10` because loopback works even when the
+adapter is down — which matters during boot, when services start before
+networking is fully up.
+
+### Forwarder
+
+```powershell
+Set-DnsServerForwarder -IPAddress 10.10.10.1 -PassThru
+```
+
+Authoritative for its own zone, forwards everything else. The chain is
+client → DC01 → FW01 → public resolver.
+
+### Reverse zone
+
+```powershell
+Add-DnsServerPrimaryZone -NetworkID "10.10.10.0/24" -ReplicationScope Domain
+```
+
+Forward DNS answers "what address is DC01." Reverse answers "what is
+10.10.10.10." Most tutorials skip it; Kerberos, some SMB operations, and every
+log tool in Phase 4 perform reverse lookups. Without it, Wazuh shows addresses
+instead of hostnames in every alert.
+
+### Time hierarchy
+
+```powershell
+w32tm /config /manualpeerlist:"10.10.10.1,0x8" /syncfromflags:manual /reliable:yes /update
+Restart-Service w32time
+Start-Sleep -Seconds 20
+w32tm /resync
+w32tm /query /status
+```
+
+The PDC Emulator is the authoritative clock for the domain; every member syncs
+from it automatically. The PDC itself needs an external reference — hence FW01.
+`0x8` means "client, standard NTP." `/reliable:yes` marks this machine as a
+trusted source for the domain.
+
+Kerberos rejects tickets past five minutes of skew. This is what stops WS01's
+domain join failing with a misleading credential error.
+
+**Expected result:** `Source: 10.10.10.1,0x8`, stratum 5–8, `ReferenceId`
+showing `0x0A0A0A01`.
+
+**If it reports `Source: Local CMOS Clock` and `LOCL`** — the configuration is
+probably correct and the service simply has not accepted the peer. Diagnose in
+layers before touching the firewall:
+
+```powershell
+w32tm /query /configuration | Select-String -Pattern "NtpServer|Type"
+w32tm /stripchart /computer:10.10.10.1 /samples:3 /dataonly
+```
+
+If stripchart returns offsets, the network path is fine — restart the service and
+resync. See `docs/troubleshooting-log.md`, entry 09.
+
+### Verify
+
+```powershell
+dcdiag /v
+dcdiag /test:DNS /v
+Resolve-DnsName dc01.corp.vaultlab.net
+Resolve-DnsName microsoft.com
+```
+
+`dcdiag /test:DNS` should show PASS across Auth, Basc, Forw, Del, Dyn, and RReg.
+`Ext` shows `n/a` on an isolated forest.
+
+Snapshot: `03-dc01-promoted`.
+
+## 8. Directory structure
+
+Do not place objects in the default `Users` container — it is not an OU and
+cannot have Group Policy linked to it.
+
+```powershell
+$dn = "DC=corp,DC=vaultlab,DC=net"
+
+New-ADOrganizationalUnit -Name "VAULTLAB" -Path $dn
+$ou = "OU=VAULTLAB,$dn"
+
+New-ADOrganizationalUnit -Name "Users"           -Path $ou
+New-ADOrganizationalUnit -Name "Workstations"    -Path $ou
+New-ADOrganizationalUnit -Name "Servers"         -Path $ou
+New-ADOrganizationalUnit -Name "ServiceAccounts" -Path $ou
+New-ADOrganizationalUnit -Name "Groups"          -Path $ou
+```
+
+The `Workstations` OU must exist before WS01 joins, since the join specifies it
+as the target.
+
+**Accounts — one person, two identities:**
+
+```powershell
+$userOU = "OU=Users,OU=VAULTLAB,DC=corp,DC=vaultlab,DC=net"
+
+New-ADUser -Name "Juan Cruz" -SamAccountName "jcruz" `
+  -UserPrincipalName "jcruz@corp.vaultlab.net" -Path $userOU `
+  -AccountPassword (Read-Host -AsSecureString "Password") -Enabled $true
+
+New-ADUser -Name "Juan Cruz (Admin)" -SamAccountName "jcruz-adm" `
+  -UserPrincipalName "jcruz-adm@corp.vaultlab.net" -Path $userOU `
+  -AccountPassword (Read-Host -AsSecureString "Password") -Enabled $true
+
+Add-ADGroupMember -Identity "Domain Admins" -Members "jcruz-adm"
+```
+
+Separating daily-use and privileged accounts is tier-zero administrative
+practice. A single account used for both means one phished credential or one
+malicious document running in a browser session grants domain-wide control. Build
+the habit here, where it costs nothing.
 
 ## Verification
 
-- [ ] `hostname` returns `DC01`
+- [ ] `hostname` returns `DC01` **(checked before promotion)**
 - [ ] `slmgr /dlv` shows Licensed, 180 days
-- [ ] `Get-NetIPConfiguration` shows 10.10.10.10, gw 10.10.10.1
-- [ ] All three connectivity layers succeed
-- [ ] Snapshot `02-dc01-base` exists
+- [ ] All three FSMO roles held by `DC01.corp.vaultlab.net`
+- [ ] `dcdiag /v` passes every test
+- [ ] `dcdiag /test:DNS /v` shows PASS across all applicable columns
+- [ ] `w32tm /query /status` names `10.10.10.1` as source, not LOCL
+- [ ] `Resolve-DnsName dc01.corp.vaultlab.net` returns 10.10.10.10
+- [ ] `Resolve-DnsName microsoft.com` resolves through the forwarder
+- [ ] OU structure exists, `Workstations` present
+- [ ] Snapshots `02-dc01-base` and `03-dc01-promoted` exist
