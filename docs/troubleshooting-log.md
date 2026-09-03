@@ -149,3 +149,131 @@ continuation, and the second line is parsed as a separate command.
 
 **Lesson.** Avoid backticks when typing interactively. Use them in scripts where
 the file can be inspected, not at a live prompt.
+
+---
+
+## 08 — Domain controller promoted under an auto-generated hostname
+
+**Symptom.** `Get-ADDomain` after a successful forest promotion returned:
+
+```
+PDCEmulator          : WIN-3KGG4AV0KPP.corp.vaultlab.net
+InfrastructureMaster : WIN-3KGG4AV0KPP.corp.vaultlab.net
+RIDMaster            : WIN-3KGG4AV0KPP.corp.vaultlab.net
+```
+
+The forest was built correctly, but under the Windows-generated hostname rather
+than `DC01`.
+
+**Diagnosis.** `Rename-Computer -NewName DC01 -Restart` had been issued but the
+result was never verified. The rename did not take, and promotion proceeded on
+the unrenamed machine. Once promoted, that hostname is embedded in the FSMO role
+assignments, the `_msdcs` SRV records, and the Kerberos service principal names.
+
+**Fix.** Reverted to snapshot `02-dc01-base` (pre-promotion), renamed, **verified
+with `hostname`**, then promoted again. Fifteen minutes.
+
+**Alternative rejected.** Renaming a live DC is supported:
+
+```powershell
+netdom computername <old> /add:DC01.corp.vaultlab.net
+netdom computername <old> /makeprimary:DC01.corp.vaultlab.net
+Restart-Computer
+netdom computername DC01 /remove:<old>.corp.vaultlab.net
+```
+
+Worth knowing — in production with replication partners and joined members there
+is often no choice. Rejected here because it leaves stale SRV records and SPNs
+requiring cleanup, and the forest was ten minutes old.
+
+**Lesson.** Verify a state change before building anything on top of it,
+especially when the next step is irreversible. `Rename-Computer` reported no
+error; the failure was silent. This is the same class of fault as entry 02 — a
+command that appears to succeed while doing nothing.
+
+`hostname` returning `DC01` is now a hard gate in runbook 03 before promotion.
+
+**Secondary lesson.** This is exactly what the snapshot was for. Discovering the
+same fault in Phase 4, with a client joined and Wazuh agents deployed, would have
+forced the `netdom` path plus cleanup.
+
+---
+
+## 09 — w32time stuck on Local CMOS Clock despite correct configuration
+
+**Symptom.** After configuring the PDC Emulator to sync from FW01:
+
+```
+Stratum: 1 (primary reference - syncd by radio clock)
+ReferenceId: 0x4C4F434C (source name: "LOCL")
+Source: Local CMOS Clock
+The computer did not resync because no time data was available.
+```
+
+Stratum 1 normally means a GPS or atomic reference. This VM was claiming that
+rank based on its own CMOS chip.
+
+**Diagnosis, in layers.**
+
+Configuration was correct:
+
+```powershell
+w32tm /query /configuration | Select-String -Pattern "NtpServer|Type"
+# Type: NTP (Local)
+# NtpServer: 10.10.10.1,0x8 (Local)
+```
+
+The peer was reachable and answering:
+
+```powershell
+w32tm /stripchart /computer:10.10.10.1 /samples:3 /dataonly
+# 05:24:13, -00.0028244s
+# 05:24:15, -00.0028619s
+# 05:24:17, -00.0027962s
+```
+
+2.8 ms offset. So NTP worked at the network layer, the firewall was not blocking
+UDP/123, and OPNsense was serving on LAN. The service simply had not accepted the
+peer as its source.
+
+**Fix.**
+
+```powershell
+Restart-Service w32time
+Start-Sleep -Seconds 20
+w32tm /resync
+```
+
+Plain `/resync`, not `/force` — the force flag can make the service discard a
+peer it is still evaluating.
+
+Result:
+
+```
+Stratum: 7 (secondary reference - syncd by (S)NTP)
+ReferenceId: 0x0A0A0A01 (source IP: 10.10.10.1)
+Source: 10.10.10.1,0x8
+```
+
+`0x0A0A0A01` is `10.10.10.1` in hex, byte by byte.
+
+**If it recurs.** A freshly promoted PDC Emulator is supposed to be the domain's
+authoritative clock, so `w32time` can mark itself reliable and treat external
+peers as advisory. `AnnounceFlags` defaults to `10` — always announce as
+reliable. Setting it to `5` announces reliability only once actually synchronised:
+
+```powershell
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Config" `
+  -Name AnnounceFlags -Value 5
+Restart-Service w32time
+```
+
+**Lesson.** Diagnose in layers and let each test isolate one thing.
+`/query /configuration` proved the settings were right, `/stripchart` proved the
+network path was right — which left only the service state. Without the
+stripchart the obvious next move would have been firewall rules, and that would
+have been an hour spent in the wrong place.
+
+**Note on stratum.** Stratum 7 rather than the expected 3–4 means FW01 is
+several hops from a reference clock. Stratum measures distance from the source,
+not accuracy. Measured offset was 2.8 ms.
