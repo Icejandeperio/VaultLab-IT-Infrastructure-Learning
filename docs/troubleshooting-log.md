@@ -277,3 +277,94 @@ have been an hour spent in the wrong place.
 **Note on stratum.** Stratum 7 rather than the expected 3–4 means FW01 is
 several hops from a reference clock. Stratum measures distance from the source,
 not accuracy. Measured offset was 2.8 ms.
+
+---
+
+## 10 — WS01 received an APIPA address; Dnsmasq not bound to CLIENT
+
+**Symptom.** WS01 booted with `169.254.117.127`, mask `255.255.0.0`, no default
+gateway. `ipconfig /release` and `/renew` changed nothing.
+
+**Diagnosis.** `169.254.x.x` is APIPA — Windows self-assigns it when a DHCP
+request goes unanswered. The `/16` mask and empty gateway confirm it. So the
+client was asking and nothing was replying.
+
+Worked outward from the machine:
+
+1. **VM adapter** — VM → Settings showed `Custom: VMnet3`, Connected, Connect at
+   power on. Correct. Hypervisor ruled out.
+2. **Service binding** — `Services → Dnsmasq DNS & DHCP → General`, the
+   **Interfaces** field contained **LAN only**. CLIENT was absent.
+
+**Fix.** Added CLIENT to the Interfaces field, saved, applied. `ipconfig /renew`
+on WS01 immediately returned `10.10.20.139` with gateway `10.10.20.1` and DNS
+`10.10.10.10`.
+
+**Why it failed.** DHCP relies on broadcast. A client with no address cannot
+unicast to a server it has not yet found, so it broadcasts to
+`255.255.255.255`. Broadcasts do not cross a router — that is the definition of
+a broadcast domain — so the DHCP server needs a listening socket on each segment
+it serves. Dnsmasq bound to LAN only had a socket on `10.10.10.1`. The DISCOVER
+arriving on `em2` was discarded because no process was listening there.
+
+The console's option 2 wrote the DHCP *range*, but binding the service to an
+interface is a separate setting in the web UI. Two halves of one configuration
+living in two places.
+
+**Lesson.** Diagnose outward from the client: adapter setting, then virtual
+switch, then service running, then service configuration. The APIPA address
+already located the fault at layer 2 or 3, which made examining DHCP *options*
+pointless — there was no lease to carry them.
+
+**Forward reference.** This is precisely the constraint DHCP relay exists to
+solve. Phase 2 moves DHCP to Windows Server on CORE; the relay agent on FW01
+catches the broadcast on `em2` and forwards it as unicast to `10.10.10.10`. That
+is what `ip helper-address` does on Cisco equipment.
+
+---
+
+## 11 — Windows 11 Enterprise Evaluation ISO shipped already expired
+
+**Symptom.** Immediately after a clean install, the desktop showed *"Windows
+License is expired."*
+
+```
+License Status: Notification
+Notification Reason: 0xC004F009 (grace time expired)
+Remaining Windows rearm count: 0
+Remaining SKU rearm count: 0
+```
+
+**Diagnosis.** Build `26100.1.240331-1435` — dated 31 March 2024, installed
+September 2026. Evaluation media carries a **fixed expiry baked into the image**,
+not a timer that starts at installation. Rearm count was already zero, so
+`slmgr /rearm` reported success but changed nothing.
+
+**Wrong first hypothesis.** The initial advice was to download a fresher ISO.
+That was incorrect — `26100.1.240331-1435` *is* the current Windows 11 Enterprise
+Evaluation image on Microsoft's Evaluation Center, unrefreshed since March 2024.
+Redownloading returns the identical file.
+
+**Fix.** Windows 11 **Enterprise LTSC 2024** is a separate product page with a
+genuinely newer build, `26100.1742.240906-0331`, carrying its own unused
+evaluation period. Full Enterprise edition, so domain join, Group Policy,
+BitLocker, and Credential Guard all work. LTSC removes the Microsoft Store,
+Edge, Copilot, and most inbox apps — a net benefit for a lab workstation, since
+it means less log noise and fewer benchmark findings.
+
+**Alternative considered.** Windows 11 Pro installed without a product key runs
+indefinitely unactivated: watermark and locked personalisation, but no expiry.
+Domain join works. Rejected because Credential Guard is Enterprise and Education
+only, and it is needed for Phase 5.
+
+**What the expiry does and does not block.** Licensing and directory services are
+unrelated subsystems. The domain join, Kerberos, DNS registration, and Group
+Policy all functioned normally on the expired install — Phase 1 was completed on
+it deliberately, to prove the plumbing before rebuilding. What it *does* break is
+Windows Update, which matters for Phase 4: OpenSCAP against an unpatchable host
+produces findings that reflect missing updates rather than misconfiguration, and
+no clean remediation delta can be demonstrated.
+
+**Lesson.** Check the build date on evaluation media before spending an hour
+installing it. Also: when correcting an assumption, verify the correction. The
+first fix proposed here was wrong in a way that would have cost another hour.
