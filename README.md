@@ -22,7 +22,8 @@ graph TD
     FW -->|em5| DMZ[DMZ · 10.10.99.0/24]
 
     CORE --> DC01[DC01 · 10.10.10.10<br/>Windows Server 2025 Core<br/>AD DS · DNS · PDC · KDC]
-    CORE -.planned.-> SRV01[SRV01 · 10.10.10.11]
+    CORE -.planned.-> ANS01[ANS01 · 10.10.10.30<br/>Ansible control node]
+    CORE -.planned.-> SRV01[SRV01 · 10.10.10.11<br/>Certificate authority]
     CLIENT --> WS01[WS01 · 10.10.20.139<br/>Windows 11 · domain-joined]
     SEC -.planned.-> SIEM01[SIEM01 · 10.10.30.20<br/>Wazuh]
     RED -.planned.-> KALI01[KALI01 · 10.10.40.20]
@@ -45,7 +46,8 @@ Usable VM budget after host overhead: **~16 GB**. See [`docs/resource-budget.md`
 ## Current state
 
 **Phase 1 complete.** Firewall, domain controller, and domain-joined client
-built and verified end to end.
+built and verified end to end. **Phase 2 in progress** — ADRs 008–010 written,
+ANS01 next.
 
 | Component | Status | Notes |
 |---|---|---|
@@ -57,7 +59,9 @@ built and verified end to end.
 | DC01 — DNS and time | Complete | Self-reference, forwarder, reverse zone, NTP from FW01 |
 | DC01 — Directory structure | Complete | VAULTLAB OU tree, split daily/privileged accounts |
 | WS01 — Windows 11 client | Complete | Domain-joined, AES-256 Kerberos, dynamic DNS |
-| WS01 — rebuild on LTSC | Pending | Eval media shipped expired — see troubleshooting 11 |
+| WS01 — rebuild on LTSC | Pending | Licensed to 3 Dec 2026, 0 rearms — see troubleshooting 12 |
+| ANS01 — Ansible control node | Not started | Phase 2, next |
+| SRV01 — certificate authority | Not started | Phase 2 |
 | SIEM01 — Wazuh | Not started | Phase 4 |
 | Segmentation hardening | Not started | Temporary allow-all in place — Phase 4 |
 
@@ -69,9 +73,22 @@ SRV records, the CLIENT→CORE firewall path carried the traffic, Kerberos
 authenticated with AES-256, the machine account landed in the correct OU, and
 clock skew stayed inside Kerberos tolerance.
 
-Eleven real faults were diagnosed and documented along the way. See
+Twelve real faults were diagnosed and documented along the way. See
 [`docs/troubleshooting-log.md`](docs/troubleshooting-log.md) — the most useful
 document in this repository.
+
+## Licensing clocks
+
+Two evaluation clocks run in this lab and both are terminal. A third starts when
+SRV01 is built. See [`docs/licensing-clock.md`](docs/licensing-clock.md).
+
+| Host | Expires | Rearms left |
+|---|---|---|
+| WS01 | 3 December 2026 | 0 |
+| DC01 | ~1 March 2027, ~late August 2027 after rearm | 1 |
+
+Automating rebuild before those dates is why Phase 2 is Ansible rather than
+something more interesting.
 
 ## Repository map
 
@@ -88,7 +105,7 @@ document in this repository.
 ## Roadmap
 
 - **Phase 1** — Foundation. Firewall, domain controller, domain-joined client. **Complete.**
-- **Phase 2** — Automation. Ansible rebuild of the forest. DHCP relay to Windows Server. SRV01 as certificate authority.
+- **Phase 2** — Automation. Ansible rebuild of the forest. DHCP relay to Windows Server. SRV01 as certificate authority. *In progress.*
 - **Phase 3** — Networking depth. Containerlab, OSPF, BGP. WireGuard on FW01, retiring ADR-007.
 - **Phase 4** — Detection and compliance. Wazuh agents, OpenSCAP against CIS/STIG, remediate, rescan, capture the delta.
 - **Phase 5** — Adversary simulation. GOAD-Light, Kali, PCAP capture, Security Onion Import node.

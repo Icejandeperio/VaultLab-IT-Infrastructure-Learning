@@ -368,3 +368,77 @@ no clean remediation delta can be demonstrated.
 **Lesson.** Check the build date on evaluation media before spending an hour
 installing it. Also: when correcting an assumption, verify the correction. The
 first fix proposed here was wrong in a way that would have cost another hour.
+
+**Partly superseded — see entry 12.** The claim above that `slmgr /rearm`
+"reported success but changed nothing" was wrong. It was checked without a
+restart, and a rearm does not take effect until the machine reboots. The clock
+was later found running with a full 90-day window to 3 December 2026. The build
+date finding and the LTSC recommendation still stand; the rearm conclusion does
+not. Original text left in place — the error is the teaching material.
+
+---
+
+## 12 — Evaluation clock found running on a machine documented as expired
+
+**Symptom.** Entry 11 recorded WS01's Windows 11 Enterprise Evaluation as
+expired, with zero rearms and Windows Update blocked. Checking before deciding
+whether to rebuild:
+
+```
+slmgr /xpr
+# Time based activation will expire on 12/3/2026 2:46 AM
+```
+
+A live expiry roughly 90 days out — a full evaluation window on a machine
+documented as dead. Windows Update, documented as blocked, was working.
+
+**Diagnosis.** Two facts constrain the explanation.
+
+A rearm does not extend a running clock. It resets the clock to the full
+evaluation period and decrements the counter. A full 90-day window alongside a
+spent counter is the signature of a rearm that has already taken effect, not of
+a clock that never started.
+
+Entry 11 records `slmgr /rearm` being run and concluding it "changed nothing."
+That conclusion was drawn without a restart. **A rearm is staged, not immediate —
+it applies at the next boot.** Checking the licence state between the command and
+the reboot shows the old value and looks exactly like failure.
+
+Best available explanation: the rearm ran, consumed the single allowance — which
+is why the counter read zero — and applied at a later reboot, resetting the clock
+to a full 90 days ending 3 December 2026.
+
+**Not fully established.** The counter was read as zero *before* the reset was
+observed, and the ordering of that read against the `/rearm` call was not
+recorded at the time. `slmgr /dlv` on WS01, read for **License Status** and
+**Remaining Windows rearm count**, would confirm or kill this. That check has not
+been run. Recorded as a hypothesis rather than a finding — writing it up as
+settled would put a guess into the repository wearing the clothes of a fact.
+
+A smaller trap alongside it: `12/3/2026` is 3 December under month-first
+formatting and 12 March under day-first, and `/xpr` gives no clue which. The
+**Time remaining** field in `/dlv` is expressed in minutes and is
+locale-independent. Prefer it whenever the date matters.
+
+**Fix.** Nothing at the system level; the machine is licensed and patching. The
+fault was documentary. `README.md` and `docs/licensing-clock.md` corrected to
+record licensed to 3 December 2026, zero rearms remaining, updates functional.
+Entry 11 annotated rather than rewritten.
+
+The consequence is a changed deadline, not a changed plan. The LTSC rebuild
+driver moves from "cannot patch" to "clock expires before Phase 4 scanning."
+Both lead to the same rebuild; they imply very different urgency, and the wrong
+one was on record.
+
+**Lesson.** A staged change checked before it applies looks identical to a change
+that failed. `slmgr /rearm`, `Rename-Computer` (entry 08), and interface
+assignment (entry 02) now account for three entries with the same shape — a
+command whose result cannot be trusted at the moment it returns. Re-check after
+the reboot, not before it.
+
+The second lesson points inward. Entries 02, 05, and 08 are about trusting a
+remembered path over the filesystem. This one is about trusting a written record
+over the running system. A document is an assertion about state, and an assertion
+nobody re-tests drifts away from what is true. This was caught only because two
+sources disagreed and a ten-second command settled it. Had the documentation been
+the sole source, the lab would have carried a wrong deadline into Phase 4.
