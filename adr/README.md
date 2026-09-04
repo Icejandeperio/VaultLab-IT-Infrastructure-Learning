@@ -18,3 +18,6 @@ to be explicit while alternatives are still open.
 | 005 | Firewall platform: OPNsense | Accepted |
 | 006 | SIEM: Wazuh standing, Security Onion on demand | Accepted |
 | 007 | Host management path on CORE (known deviation) | Accepted, to be superseded in Phase 3 |
+| 008 | Configuration management: Ansible | Accepted |
+| 009 | DHCP on Windows Server with a relay on FW01 | Accepted |
+| 010 | SRV01 as an internal certificate authority | Accepted |
