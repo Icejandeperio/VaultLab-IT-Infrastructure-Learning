@@ -1,6 +1,7 @@
 # ── Secrets and credentials ────────────────────────────────
 # OPNsense config exports contain password hashes and private keys.
-*.xml
+config-*.xml
+*-config.xml
 config-backup*
 *.key
 *.pfx
