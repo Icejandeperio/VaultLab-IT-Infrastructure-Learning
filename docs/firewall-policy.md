@@ -34,6 +34,19 @@ rule attached to SEC but sourced from `CLIENT net` will never match anything,
 because no host on SEC holds a CLIENT address. It appears in the ruleset, looks
 correct at a glance, and does nothing. See `troubleshooting-log.md`, entry 04.
 
+## Transit traffic versus firewall-originated traffic
+
+The rules above govern packets **passing through** the box: they arrive on one
+interface, match a rule, and are forwarded or dropped. Packets the firewall
+**generates itself** are a separate category, and pf does not evaluate them
+against interface rules on the way out.
+
+This distinction is easy to lose, and losing it produces exactly the inert rule
+described above — one that reads correctly and can never match, because the
+traffic it describes does not exist in that form.
+
+The DHCP relay is the clearest case in this lab. See the section below.
+
 ## Phase 4 target: default deny on CLIENT
 
 Replace the CLIENT allow-all with explicit rules, then observe what breaks using
@@ -54,16 +67,43 @@ Required CLIENT → CORE flows for Active Directory:
 | Global Catalog | 3268, 3269 | TCP |
 | Dynamic RPC | 49152–65535 | TCP |
 | NTP | 123 | UDP |
-| DHCP relay to DC01 | 67, 68 | UDP |
 | ICMP echo | — | ICMP |
 
 The dynamic RPC range is why Active Directory is genuinely difficult to firewall
 properly. Everything else CLIENT → CORE: block and log.
 
-DHCP appears here from Phase 2 onward. The relay on FW01 forwards the client's
-broadcast to `10.10.10.10` as unicast, so once CLIENT is tightened this becomes an
-explicit flow rather than something the allow-all was quietly carrying. See
-ADR-009.
+**DHCP is deliberately absent from this table.** An earlier version of this
+document listed ports 67 and 68 here as a CLIENT → CORE flow. That was wrong, and
+wrong in the same way as entry 04's inert rules.
+
+## Where DHCP traffic actually goes
+
+After the Phase 2 migration (ADR-009) the transaction has two legs, and neither is
+a CLIENT-net-to-CORE flow.
+
+**Leg one — client to firewall.** WS01 broadcasts DHCPDISCOVER to
+`255.255.255.255`. A client with no address cannot unicast to a server it has not
+found. The destination is the broadcast address, and the packet is consumed by the
+relay process on FW01 itself. It is addressed *to the firewall*, not through it,
+so a rule describing CLIENT → CORE never sees it. OPNsense generates the necessary
+permission automatically on interfaces where a DHCP service or relay is enabled.
+
+**Leg two — firewall to server.** FW01 rewrites the request as a unicast packet to
+`10.10.10.10`. The source address is now **FW01's own**, not WS01's. A rule
+sourced from `CLIENT net` cannot match it, because the packet no longer carries a
+CLIENT-net source. This is firewall-originated traffic and is governed by
+self-originated rules, not by the CLIENT interface ruleset.
+
+The rewrite also inserts FW01's CLIENT interface address into the packet's
+`giaddr` field. That field is how the server knows which scope to answer from —
+the unicast source is the relay, so a server holding four scopes would otherwise
+have no way to tell where the request originated. This is the entire mechanism
+behind `ip helper-address` on Cisco equipment.
+
+**What to verify when tightening CLIENT in Phase 4:** that WS01 still obtains a
+lease after the allow-all is removed. If it does not, check the relay service and
+the automatically generated rules — not the CLIENT → CORE ruleset, which was never
+carrying this traffic.
 
 ## CORE → CLIENT: the management flow
 
@@ -87,9 +127,9 @@ and finding it in your own lab is cheaper than finding it in production.
 
 Note that ANS01 → DC01 and ANS01 → SRV01 are CORE → CORE. Both endpoints sit on
 the same segment, so that traffic never reaches the firewall and no rule governs
-it. Segmentation only constrains what crosses a boundary — a fact worth being
-explicit about, because it is easy to assume a firewall rule is protecting a flow
-that never passes through the firewall at all.
+it. Segmentation only constrains what crosses a boundary — worth being explicit
+about, because it is easy to assume a rule is protecting a flow that never passes
+through the firewall at all.
 
 ## Segment intent
 
