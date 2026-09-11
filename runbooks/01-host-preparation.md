@@ -15,8 +15,10 @@ Skipping section 2 is the single most common reason a home lab feels sluggish.
 
 ## 2. Remove competing hypervisor layers
 
-If Hyper-V or VBS is active, VMware runs on top of Microsoft's hypervisor rather
-than the hardware.
+Only one component can own the CPU's virtualization extensions at a time. If
+Hyper-V or VBS is active, it takes that ownership at boot and VMware must run on
+top of Microsoft's hypervisor through the Windows Hypervisor Platform API rather
+than addressing the hardware directly.
 
 **Windows features** — run `optionalfeatures.exe`, uncheck: Hyper-V (all),
 Virtual Machine Platform, Windows Hypervisor Platform, Windows Sandbox, Windows
@@ -46,6 +48,15 @@ re-enable Memory Integrity.
 
 > **Trade-off:** this reduces host security. Acceptable on a dedicated lab
 > machine. If the laptop holds client data or work credentials, reconsider.
+
+> **This decision is load-bearing beyond this runbook.** WSL2 requires Virtual
+> Machine Platform, which is the Hyper-V hypervisor under a different name.
+> Turning WSL back on later reverses this section for **every VM in the lab**,
+> permanently. ADR-008 rejected running Ansible from WSL on exactly these grounds
+> and specifies a dedicated control node VM instead. Anything that asks for WSL,
+> Windows Sandbox, Docker Desktop's WSL backend, or Android emulation is asking
+> for the hypervisor back — treat it as an architectural change, not a feature
+> toggle.
 
 ## 3. Power and thermal
 
@@ -81,6 +92,13 @@ scanning virtual disk I/O causes severe, hard-to-diagnose performance loss.
 
 - **Memory** → Reserved memory `17000 MB`, allow some VM memory to be swapped
 - **Workspace** → default VM location `C:\Lab\VMs`
+
+Reserved memory is the hard ceiling on what VMware may claim from the host across
+all running VMs. It is not the same number as the planning figure in
+`docs/resource-budget.md`, and the two are not meant to match: the budget plans
+around **~16 GB** with headroom retained, and the 17000 MB cap sits deliberately
+above it so the planning figure binds first. If VMs are ever refused memory at
+power-on, the budget has been exceeded and this cap is the thing that caught it.
 
 ## 6. Virtual network fabric
 

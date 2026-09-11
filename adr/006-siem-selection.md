@@ -34,3 +34,30 @@ Deferred.
   Import node workflow: capture during an exercise, then analyse.
 - Security Onion 2.4 reaches end of life 1 October 2026; the 3.x branch runs on
   Oracle Linux 9 only. Plan against 3.x.
+
+## Amendment — the sizing figures need re-checking before Phase 5
+
+**The resource numbers above are Security Onion 2.4 figures, and 2.4 is at end of
+life.** Confirmed: 2.4 reaches EOL on 1 October 2026, and the 3.x line has
+shipped — 3.0.0 in March 2026, 3.1.0 in May, 3.2.0 in July. Ubuntu and Debian
+were officially removed as supported base systems in 3.0; 3.x runs on Oracle
+Linux 9 only.
+
+A changed base OS and three feature releases mean the Eval node and Import node
+requirements may no longer be what this ADR states — and those numbers are
+precisely what the rejection of Security Onion as the standing platform rests on.
+
+**Before building anything in Phase 5**, read the current hardware requirements
+from the 3.x documentation and record what they actually say. If the Import node
+has grown past what the budget allows, that is a decision to revisit rather than
+discover mid-build.
+
+The decision itself — Wazuh standing, Security Onion on demand — is not disturbed
+by this. Wazuh's role is agent-based FIM and compliance scanning, which Security
+Onion does not replace at any size. What could change is whether the on-demand
+Import node remains affordable at all, and if it does not, the Phase 5 PCAP
+analysis approach needs a different answer.
+
+Flagged rather than resolved because Phase 5 is distant and the figures would go
+stale again before then. The action is to verify at build time, not to write
+numbers here that will be wrong by the time they are used.

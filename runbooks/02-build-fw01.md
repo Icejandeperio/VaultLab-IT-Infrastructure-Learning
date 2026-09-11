@@ -101,6 +101,18 @@ Two prompts worth understanding rather than pattern-matching:
 
 The IPv6 address prompt wants an address, not yes/no. Typing `n` makes it repeat.
 
+> **This DHCP service is retired in Phase 2.** ADR-009 moves DHCP to Windows
+> Server on DC01 and reconfigures FW01 as a **relay** on CLIENT instead. If you
+> are rebuilding FW01 after that migration, answer **no** to the DHCP server
+> prompt on OPT1 as well, and configure **Services → DHCPRelay** pointing at
+> `10.10.10.10` per runbook 05 section 8. Enabling both produces two DHCP servers
+> on one segment, which fails intermittently and is genuinely unpleasant to
+> diagnose.
+>
+> Note also that binding the service to an interface is a **separate setting in
+> the web UI** from the range configured here. Console option 2 writes the range
+> only. Missing the binding produced troubleshooting entry 10.
+
 ## 6. Web configuration
 
 Browse to `https://10.10.10.1` from the host. Certificate warning is expected.

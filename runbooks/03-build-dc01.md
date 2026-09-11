@@ -7,6 +7,18 @@
 Do not install Windows Server until ready to build. The 180-day clock starts at
 installation, not first use. See `docs/licensing-clock.md`.
 
+> **Sections 1–5 are the generic Server 2025 Core build** and are reused by other
+> Windows servers in this lab. Runbook 05 section 7 builds **SRV01** from them,
+> substituting the name `SRV01`, address `10.10.10.11`, and 3072 MB of memory.
+> Sections 6 onward are DC01-specific — forest promotion, DNS authority, the time
+> hierarchy, and the directory structure. SRV01 joins the existing domain instead
+> and then installs ADCS.
+>
+> Two things apply to **every** server built from this runbook, not just DC01:
+> the hostname gate in section 5, and the 10-day activation deadline. Record each
+> server's own licensing clock from `slmgr /dlv` — do not carry DC01's dates
+> across by assumption.
+
 ## 1. Create the VM
 
 New Virtual Machine → **Custom**:
@@ -110,6 +122,11 @@ requires working DNS; run it after the checks above, not before.
 If `/ato` returns `0xC004E028`, a request is already in flight — wait, then check
 `/dlv` rather than firing again.
 
+**Record this server's clock in `docs/licensing-clock.md`** — License Status,
+Time remaining, and Remaining Windows rearm count, read from `/dlv`. Prefer Time
+remaining over `slmgr /xpr` for the expiry date; it is expressed in minutes and
+does not depend on the machine's date format.
+
 **Rename, then reboot:**
 
 ```powershell
@@ -129,7 +146,9 @@ Rename-Computer -NewName DC01 -Restart
 > assignments, the `_msdcs` SRV records, and every Kerberos SPN. Recovering
 > costs a snapshot revert and a second promotion.
 >
-> See `docs/troubleshooting-log.md`, entry 08.
+> See `docs/troubleshooting-log.md`, entry 08. This gate applies to **any** server
+> built from this runbook, not only domain controllers — a CA with the wrong
+> hostname bakes that name into every certificate it issues.
 
 Snapshot: `02-dc01-base`.
 
@@ -273,7 +292,7 @@ New-ADOrganizationalUnit -Name "Groups"          -Path $ou
 ```
 
 The `Workstations` OU must exist before WS01 joins, since the join specifies it
-as the target.
+as the target. The same applies to `Servers` before SRV01 joins.
 
 **Accounts — one person, two identities:**
 
@@ -296,15 +315,21 @@ practice. A single account used for both means one phished credential or one
 malicious document running in a browser session grants domain-wide control. Build
 the habit here, where it costs nothing.
 
+> **From Phase 2 onward this section is also expressed as Ansible playbooks.**
+> `playbooks/ou-structure.yml` and `playbooks/users-groups.yml` must produce the
+> same result, and running them against an existing domain must report
+> `changed=0`. Anything changed here by hand and not backported to code is lost at
+> the next rebuild. See runbook 05.
+
 ## Verification
 
 - [ ] `hostname` returns `DC01` **(checked before promotion)**
-- [ ] `slmgr /dlv` shows Licensed, 180 days
+- [ ] `slmgr /dlv` shows Licensed, 180 days, and the figures recorded in `docs/licensing-clock.md`
 - [ ] All three FSMO roles held by `DC01.corp.vaultlab.net`
 - [ ] `dcdiag /v` passes every test
 - [ ] `dcdiag /test:DNS /v` shows PASS across all applicable columns
 - [ ] `w32tm /query /status` names `10.10.10.1` as source, not LOCL
 - [ ] `Resolve-DnsName dc01.corp.vaultlab.net` returns 10.10.10.10
 - [ ] `Resolve-DnsName microsoft.com` resolves through the forwarder
-- [ ] OU structure exists, `Workstations` present
+- [ ] OU structure exists, `Workstations` and `Servers` present
 - [ ] Snapshots `02-dc01-base` and `03-dc01-promoted` exist
