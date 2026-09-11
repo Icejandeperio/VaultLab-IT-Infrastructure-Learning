@@ -4,16 +4,23 @@
 chain from DHCP through DNS, firewall traversal, Kerberos, and OU targeting.
 
 **Status:** Complete on Enterprise Evaluation. Rebuild on LTSC 2024 pending —
-see `docs/troubleshooting-log.md`, entry 11.
+see `docs/troubleshooting-log.md`, entries 11 and 12, and
+`docs/licensing-clock.md`.
 
 ## 0. Media
 
 Use **Windows 11 Enterprise LTSC 2024**, build `26100.1742.240906-0331`.
 
 Do **not** use the standard Windows 11 Enterprise Evaluation. That image is
-`26100.1.240331-1435` and ships already expired — evaluation media carries a
-fixed expiry baked into the build, not a timer starting at install. Rearm count
-is zero on arrival.
+`26100.1.240331-1435` and ships with a fixed expiry already passed — evaluation
+media carries the expiry baked into the build, not a timer starting at install.
+
+The installed WS01 is nevertheless licensed until **3 December 2026**: the single
+available rearm was applied and reset the clock to a full 90-day window. That
+rearm is spent, there is no second one, and the correction to the original
+"zero rearms, permanently expired" reading is entry 12. Verify the state on any
+install with `slmgr /dlv` rather than inferring it — and re-check after a reboot,
+because a rearm does not apply until the machine restarts.
 
 Verify the SHA-256 against the download page before installing.
 
@@ -39,6 +46,11 @@ the `_ldap._tcp.dc._msdcs` SRV records.
 
 Set this in the scope, never on the client. Hardcoding DNS on WS01 papers over
 the problem for exactly one machine.
+
+> **From Phase 2 onward this section changes.** DHCP moves to Windows Server on
+> DC01 with a relay on FW01, and the scope options are set there instead. See
+> ADR-009 and runbook 05. If the rebuild happens after that migration, configure
+> the scope on DC01 and skip this section entirely.
 
 ## 2. Create the VM
 
@@ -98,6 +110,18 @@ be scanning against in Phase 4.
 
 Install VMware Tools.
 
+**Then check the licence state before doing anything else:**
+
+```powershell
+slmgr /dlv
+```
+
+Read **License Status**, **Time remaining**, and **Remaining Windows rearm
+count**, and record all three in `docs/licensing-clock.md`. Do not carry the
+figures across from the previous install. Prefer **Time remaining** over
+`slmgr /xpr` for the expiry — it is expressed in minutes and does not depend on
+whether the machine's date format is month-first or day-first.
+
 ## 5. Verify DHCP before joining
 
 ```powershell
@@ -108,7 +132,7 @@ ipconfig /all
 |---|---|
 | IPv4 Address | `10.10.20.100`–`.200` |
 | Default Gateway | `10.10.20.1` |
-| DHCP Server | `10.10.20.1` |
+| DHCP Server | `10.10.20.1`, or `10.10.10.10` after the Phase 2 migration |
 | **DNS Servers** | **`10.10.10.10`** |
 | DNS Suffix | `corp.vaultlab.net` |
 
@@ -146,6 +170,19 @@ Rename-Computer -NewName WS01 -Restart
 
 ## 7. Join
 
+**Before joining a rebuilt machine**, delete the existing computer object on
+DC01:
+
+```powershell
+Get-ADComputer WS01 -Properties whenCreated, DistinguishedName
+Remove-ADComputer WS01
+```
+
+A fresh install under the same name is a different security principal with a
+different SID. The old object holds a machine account password the new machine
+does not know, and reusing the name without clearing it produces either a join
+failure or an account the new machine cannot authenticate with.
+
 ```powershell
 Add-Computer -DomainName "corp.vaultlab.net" `
   -OUPath "OU=Workstations,OU=VAULTLAB,DC=corp,DC=vaultlab,DC=net" `
@@ -168,6 +205,7 @@ afterward misses any GPO linked there until its next policy refresh.
 | Clock skew / time difference | Kerberos — see runbook 03 §7 |
 | Access denied | Credentials or rights |
 | Cannot find the OU | Typo in the distinguished name |
+| Account already exists | Stale computer object not removed |
 
 ## 8. Verify
 
@@ -202,15 +240,24 @@ Get-ADComputer WS01 -Properties * | Select-Object Name, DistinguishedName, Opera
 A populated `LastLogonDate` means it authenticated, not merely that an object was
 created.
 
+**Record the new lease address** in `docs/address-plan.md` if it differs from
+`10.10.20.139`, and capture the adapter's MAC for
+`docs/interface-mapping.md`.
+
 Snapshot: `01-ws01-joined`.
 
 ## Verification
 
-- [ ] Dnsmasq bound to CLIENT, option 6 set to 10.10.10.10
+- [ ] Media is LTSC 2024, build verified against the download page
+- [ ] `slmgr /dlv` read and the three figures recorded in `docs/licensing-clock.md`
+- [ ] Dnsmasq bound to CLIENT with option 6 set to 10.10.10.10, **or** the Phase 2
+      Windows scope active
 - [ ] WS01 holds an address in the pool with DNS `10.10.10.10`
 - [ ] `nltest /dsgetdc` returns DC01
 - [ ] `hostname` returned `WS01` **before** the join
+- [ ] Stale computer object removed before rejoining
 - [ ] Computer object in the Workstations OU with a populated LastLogonDate
 - [ ] `klist` shows an AES-256 TGT from DC01
 - [ ] `ws01.corp.vaultlab.net` resolves to the DHCP-assigned address
+- [ ] Address plan and interface mapping updated
 - [ ] Snapshot `01-ws01-joined` exists
