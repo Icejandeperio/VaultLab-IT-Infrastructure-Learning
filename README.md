@@ -41,7 +41,8 @@ graph TD
 | Host OS | Windows 11 |
 | Hypervisor | VMware Workstation Pro 26H1 |
 
-Usable VM budget after host overhead: **~16 GB**. See [`docs/resource-budget.md`](docs/resource-budget.md).
+Usable VM budget after host overhead: **~16 GB**, and roughly 8 meaningful CPU
+cores rather than 16 threads. See [`docs/resource-budget.md`](docs/resource-budget.md).
 
 ## Current state
 
@@ -90,12 +91,34 @@ SRV01 is built. See [`docs/licensing-clock.md`](docs/licensing-clock.md).
 Automating rebuild before those dates is why Phase 2 is Ansible rather than
 something more interesting.
 
+## Conventions
+
+- **Hostnames:** `[ROLE][##]` — `FW01`, `DC01`, `WS01`, `ANS01`, `SRV01`,
+  `SIEM01`. Max 15 characters, no hyphens. Two digits so `ANS01` and `ANS10` sort
+  correctly.
+- **Addressing:** `10.10.0.0/16`, one `/24` per segment, third octet identifies
+  the segment. See [`docs/address-plan.md`](docs/address-plan.md).
+- **Domain:** `corp.vaultlab.net`, NetBIOS `VAULTLAB`.
+- **Decisions:** architectural decisions get an ADR in `adr/` **before**
+  implementation, not after.
+- **Verify, never assert.** File paths, filenames, cmdlet names, and menu
+  locations are confirmed against the system — `Get-ChildItem`, `Test-Path`,
+  `Get-Volume`, `ls` — not stated from memory. Four faults in this project came
+  from asserted paths that did not exist.
+- **Verify state changes before building on them.** `Rename-Computer`, interface
+  assignment, and `slmgr /rearm` all report success while doing nothing until a
+  reboot or confirmation step. Re-check afterward.
+- **Every real fault gets a troubleshooting entry:** symptom, diagnosis, fix,
+  lesson.
+- **Changes to any of the above** follow
+  [`docs/change-control.md`](docs/change-control.md).
+
 ## Repository map
 
 | Path | Contents |
 |---|---|
 | `adr/` | Architecture Decision Records — what was chosen and why |
-| `docs/` | Reference: addressing, interfaces, firewall policy, budget, troubleshooting |
+| `docs/` | Reference: addressing, interfaces, firewall policy, budget, change control, troubleshooting |
 | `runbooks/` | Reproducible build procedures |
 | `ansible/` | Automation (Phase 2 onward) |
 | `evidence/` | Compliance scan output, before/after remediation |

@@ -54,10 +54,42 @@ Required CLIENT → CORE flows for Active Directory:
 | Global Catalog | 3268, 3269 | TCP |
 | Dynamic RPC | 49152–65535 | TCP |
 | NTP | 123 | UDP |
+| DHCP relay to DC01 | 67, 68 | UDP |
 | ICMP echo | — | ICMP |
 
 The dynamic RPC range is why Active Directory is genuinely difficult to firewall
 properly. Everything else CLIENT → CORE: block and log.
+
+DHCP appears here from Phase 2 onward. The relay on FW01 forwards the client's
+broadcast to `10.10.10.10` as unicast, so once CLIENT is tightened this becomes an
+explicit flow rather than something the allow-all was quietly carrying. See
+ADR-009.
+
+## CORE → CLIENT: the management flow
+
+Phase 2 introduces traffic in the direction this policy previously had no position
+on. ANS01 on CORE must reach WS01 on CLIENT to configure it.
+
+| Service | Port | Protocol | Source |
+|---|---|---|---|
+| WinRM HTTP | 5985 | TCP | ANS01 only — bootstrap, retired |
+| WinRM HTTPS | 5986 | TCP | ANS01 only |
+
+**Scoped to the control node's address, not to `CORE net`.** A rule permitting all
+of CORE to reach CLIENT over WinRM would let a compromised DC01 or SRV01 reach
+workstations by the same path. The flow exists because one specific machine needs
+it; the rule should say so.
+
+5985 is unencrypted and exists only until SRV01 can issue a server authentication
+certificate. Remove it then — an HTTP management listener that outlives its
+justification is exactly the kind of thing a Phase 4 compliance scan should find,
+and finding it in your own lab is cheaper than finding it in production.
+
+Note that ANS01 → DC01 and ANS01 → SRV01 are CORE → CORE. Both endpoints sit on
+the same segment, so that traffic never reaches the firewall and no rule governs
+it. Segmentation only constrains what crosses a boundary — a fact worth being
+explicit about, because it is easy to assume a firewall rule is protecting a flow
+that never passes through the firewall at all.
 
 ## Segment intent
 
@@ -66,7 +98,14 @@ properly. Everything else CLIENT → CORE: block and log.
 | CLIENT → CORE | Explicit AD ports only |
 | CLIENT → SEC | Deny |
 | CLIENT → RED | Deny |
+| CORE → CLIENT | Deny by default; WinRM from the control node only |
+| CORE → SEC | Agent traffic to the SIEM, initiated from CORE |
 | RED → CLIENT, DMZ | Permit — this is the attack path |
 | RED → CORE | Deny by default; opened deliberately per exercise |
 | SEC → anywhere | Deny outbound initiation; receives only |
 | DMZ → anywhere internal | Deny, always |
+
+CORE → SEC is listed because Wazuh agents in Phase 4 will run on CORE hosts and
+report to SIEM01. The SEC row says SEC initiates nothing outbound — agents push to
+the manager, the manager does not pull from agents, and that asymmetry is what
+keeps the evidence store unreachable from the systems it monitors.

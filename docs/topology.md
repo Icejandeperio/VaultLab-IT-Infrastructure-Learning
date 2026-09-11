@@ -13,10 +13,11 @@ graph TD
     FW -->|em4| RED[RED · 10.10.40.0/24]
     FW -->|em5| DMZ[DMZ · 10.10.99.0/24]
 
-    CORE --> DC01[DC01 · 10.10.10.10<br/>WS2025 Core · AD DS · DNS]
+    CORE --> DC01[DC01 · 10.10.10.10<br/>WS2025 Core · AD DS · DNS · PDC · KDC]
     CORE -.-> HOST[Windows host · 10.10.10.5<br/>mgmt only · ADR-007]
-    CORE -.planned.-> SRV01[SRV01 · 10.10.10.11]
-    CLIENT -.planned.-> WS01[WS01 · DHCP .100-.200]
+    CORE -.planned.-> SRV01[SRV01 · 10.10.10.11<br/>Enterprise CA · ADR-010]
+    CORE -.planned.-> ANS01[ANS01 · 10.10.10.30<br/>Ansible control node · ADR-008]
+    CLIENT --> WS01[WS01 · 10.10.20.139<br/>Windows 11 · domain-joined]
     SEC -.planned.-> SIEM01[SIEM01 · 10.10.30.20 · Wazuh]
     RED -.planned.-> KALI01[KALI01 · 10.10.40.20]
     DMZ -.planned.-> TGT[Vulnerable targets]
@@ -47,8 +48,24 @@ decorative. This is why each VM gets exactly one adapter on exactly one segment.
 
 | Segment | Trust | Reasoning |
 |---|---|---|
-| CORE | Highest | Directory services. Compromise here is total. |
+| CORE | Highest | Directory services, certificate authority, and the automation control node. Compromise here is total. |
 | SEC | High | Holds logs and evidence. Must not be reachable from what it monitors. |
 | CLIENT | Medium | User workstations. Assumed to be the initial foothold. |
 | RED | Low | Attack tooling. Deliberately hostile. |
 | DMZ | None | Deliberately vulnerable. No egress, no lateral movement. |
+
+## Why the control node sits at the top
+
+ANS01 is a 2 GB Ubuntu VM with no services and no users, which makes it look like
+the least important machine in the lab. It is not. It holds credentials for the
+domain controller and can rewrite that machine's configuration from code.
+
+**Anything that can rewrite a tier-zero asset is itself tier zero**, regardless of
+what it looks like. Placing it on a management segment or on CLIENT would mean a
+compromise of that lower-trust segment inherits control of the domain. The same
+logic puts SRV01 on CORE: a certificate authority can issue a certificate for any
+identity in the forest, so compromising it is equivalent to compromising the
+domain.
+
+This is the reasoning that makes the trust ordering above operational rather than
+decorative. Trust follows capability, not appearance.

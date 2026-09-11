@@ -20,6 +20,25 @@ guest, not assumed from ordering.
 |---|---|---|---|---|
 | ethernet0 | `00:0c:29:16:99:84` | VMnet2 | Ethernet0 | 10.10.10.10/24 |
 
+## WS01
+
+| VMX device | MAC | VMnet | Windows | Address |
+|---|---|---|---|---|
+| ethernet0 | *not recorded* | VMnet3 | Ethernet0 | 10.10.20.139/24 (DHCP) |
+
+Single adapter, so there is no ordering to get wrong and the mapping was never
+in doubt. Recorded for completeness — a segment assignment stated in a document
+is checkable, and one held only in the VM settings dialog is not. Capture the MAC
+next time WS01 is powered on, or during the LTSC rebuild.
+
+## ANS01
+
+Single adapter on **VMnet2 (CORE)**, `10.10.10.30/24` static. Record the MAC and
+the Linux interface name at build time. Ubuntu's predictable network interface
+naming typically produces `ens33` on VMware, but that depends on PCI slot and
+firmware and is not guaranteed — confirm with `ip link` rather than writing
+`ens33` into netplan on faith.
+
 ## How to verify
 
 Adapter type is E1000 (`Intel 82574L`), which is why interfaces enumerate as
@@ -38,6 +57,12 @@ Select-String -Path C:\Lab\VMs\FW01\FW01.vmx `
 
 ```sh
 ifconfig | grep -E "^em|ether"
+```
+
+On a Linux guest such as ANS01:
+
+```sh
+ip -br link
 ```
 
 Match the final octet of each MAC. VMware derives all six from the VM's UUID with
