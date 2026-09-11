@@ -74,7 +74,7 @@ SRV records, the CLIENT→CORE firewall path carried the traffic, Kerberos
 authenticated with AES-256, the machine account landed in the correct OU, and
 clock skew stayed inside Kerberos tolerance.
 
-Twelve real faults were diagnosed and documented along the way. See
+Thirteen real faults were diagnosed and documented along the way. See
 [`docs/troubleshooting-log.md`](docs/troubleshooting-log.md) — the most useful
 document in this repository.
 
@@ -118,8 +118,8 @@ something more interesting.
 | Path | Contents |
 |---|---|
 | `adr/` | Architecture Decision Records — what was chosen and why |
-| `docs/` | Reference: addressing, interfaces, firewall policy, budget, change control, troubleshooting |
-| `runbooks/` | Reproducible build procedures |
+| `docs/` | Addressing, topology, interface mapping, firewall policy, resource budget, licensing clocks, git workflow, change control, troubleshooting log |
+| `runbooks/` | Reproducible build procedures, numbered by phase |
 | `ansible/` | Automation (Phase 2 onward) |
 | `evidence/` | Compliance scan output, before/after remediation |
 | `diagrams/` | Mermaid sources and exports |

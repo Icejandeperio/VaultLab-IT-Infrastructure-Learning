@@ -59,9 +59,25 @@ a pointer forward. The wrong conclusion is the teaching material; deleting it
 would leave a log that has never been wrong about anything, which is not credible
 and not useful.
 
+## Work locally, not on github.com
+
+**Edit files in the working copy, commit, push.** A file changed through the
+GitHub web interface creates a commit the local clone has never seen, and the
+next push is rejected as a non-fast-forward. Recovering costs a
+fetch-inspect-rebase cycle every time — more than the edit saved. This happened
+twice in one session; see troubleshooting entry 13.
+
+Reserve the web interface for things with no local equivalent: repository
+settings, secret scanning and push protection, branch protection rules.
+
+The general form is worth holding on to. **A change made outside your working copy
+is invisible until you fetch.** The web UI, a second machine, and a collaborator
+all produce the same divergence, and `git fetch` followed by inspecting both
+commit ranges is the same first move in all three cases.
+
 ## Pre-commit checklist
 
-Before every commit, ask three questions:
+Before every commit, ask four questions:
 
 1. **Does anything I decided this session contradict a file I did not touch?**
    Addresses, RAM, vCPU, OS versions, and status tables are the usual suspects.
@@ -70,6 +86,11 @@ Before every commit, ask three questions:
    status and all drift independently.
 3. **Did anything fail today?** If yes, it earns a troubleshooting entry now,
    while the diagnosis is still in your head.
+4. **After committing, does `git status` read clean?** Anything still listed as
+   modified was meant to be in that commit and was not staged. A written and
+   placed file that never reached the `git add` line is invisible otherwise — it
+   happened to `docs/git-workflow.md`, which was rewritten, saved, and left out of
+   the commit that was supposed to carry it.
 
 Then read the diff for every staged file. `git diff --cached` before committing;
 that is also the step that catches a password pasted into a command block.
@@ -95,18 +116,22 @@ in the file, with the check that would settle it. Entry 12 does this.
 
 ## Project-folder sync
 
-Four files are loaded as Claude project knowledge so conversations start with
+Five files are loaded as Claude project knowledge so conversations start with
 context. They are copies and they go stale silently, because nothing warns you:
 
 - `README.md`
 - `docs/address-plan.md`
 - `docs/resource-budget.md`
+- `docs/change-control.md`
 - `CLAUDE.md` — project knowledge only, deliberately not in the repo
 
-**After any commit that touches the first three, re-upload them.** A stale project
+**After any commit that touches the first four, re-upload them.** A stale project
 copy is worse than none: it produces confident advice built on a state that no
 longer exists. That is how a decision gets made against a nine-gigabyte Profile A
 that has not been accurate for a week.
+
+This file is on the list deliberately. A change-control protocol that is not
+loaded into the session it governs protects nothing.
 
 `CLAUDE.md` is the exception. It exists only as project knowledge and has no repo
 copy to drift from. Its two portable conventions — the hostname pattern and the

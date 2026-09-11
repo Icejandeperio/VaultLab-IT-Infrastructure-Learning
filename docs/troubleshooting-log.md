@@ -436,9 +436,83 @@ assignment (entry 02) now account for three entries with the same shape — a
 command whose result cannot be trusted at the moment it returns. Re-check after
 the reboot, not before it.
 
-The second lesson points inward. Entries 02, 05, and 08 are about trusting a
-remembered path over the filesystem. This one is about trusting a written record
-over the running system. A document is an assertion about state, and an assertion
-nobody re-tests drifts away from what is true. This was caught only because two
-sources disagreed and a ten-second command settled it. Had the documentation been
-the sole source, the lab would have carried a wrong deadline into Phase 4.
+The second lesson points inward. Entry 05 is about trusting a remembered path
+over the filesystem. This one is about trusting a written record over the running
+system. A document is an assertion about state, and an assertion nobody re-tests
+drifts away from what is true. This was caught only because two sources disagreed
+and a ten-second command settled it. Had the documentation been the sole source,
+the lab would have carried a wrong deadline into Phase 4.
+
+---
+
+## 13 — Push rejected twice: commits made through the GitHub web interface
+
+**Symptom.** `git push` rejected on two separate occasions in one session:
+
+```
+! [rejected]  main -> main (fetch first)
+hint: Updates were rejected because the remote contains work that you do not
+hint: have locally.
+```
+
+Both times the local commits were sound and the working tree had been committed.
+
+**Diagnosis.** A branch is a pointer to one commit, and each commit names its
+parent. A *fast-forward* push is possible when the remote's current commit is an
+ancestor of yours — git slides the pointer along an unbroken chain and nothing
+becomes unreachable. When the histories have diverged, moving the pointer to
+yours would orphan whatever sits on the remote past the split point, so git
+refuses rather than do that silently.
+
+Both divergences had the same cause: a file edited directly on github.com.
+First `CLAUDE.md` deleted, then `.gitignore` amended. Each created a commit the
+local clone had never seen.
+
+Diagnosed read-only before integrating:
+
+```powershell
+git fetch origin
+git log --oneline main..origin/main     # only on the remote
+git log --oneline origin/main..main     # only local
+```
+
+`git fetch` updates `origin/main` without touching the local branch, which is
+what makes inspection possible before committing to a merge strategy.
+
+**Fix.** `git rebase origin/main` in both cases, replaying local commits on top of
+the remote tip, then push. Rebase rather than merge because the remote change was
+a single-file edit made by the same person — a merge commit would record a
+collaboration that did not happen, and the commit history is a portfolio artifact.
+
+**Two complications encountered along the way.**
+
+The second rebase refused with `cannot rebase: You have unstaged changes`. Rebase
+rewrites the working directory and will not risk overwriting changes git has no
+record of. `git status` showed two modified files. `.gitignore` held a local
+duplicate of the same edit already committed on the remote — safe to
+`git restore`, because the content existed in commit `b158868` and restoring read
+it back from there rather than destroying anything unique.
+
+`docs/git-workflow.md` was the other, and it was not a duplicate. The file had
+been written and placed but omitted from the `git add` line of the commit that
+was supposed to carry it. Restoring it would have thrown away the intended
+version. It was committed separately instead.
+
+**Lesson.** **A change made outside your working copy is invisible until you
+fetch.** The web UI, a second machine, and a collaborator all produce the same
+divergence. Editing on github.com costs a fetch-inspect-rebase cycle on the next
+push, every time — more than the edit saved. Reserve the web interface for things
+with no local equivalent: repository settings, secret scanning, branch protection.
+
+**Second lesson.** `git restore` is normally the one command in this sequence with
+no undo, and the rule is to read `git diff` before clearing anything. The
+exception is narrow and worth stating precisely: discarding an uncommitted change
+is safe only when the content exists somewhere else. A local deletion of a file
+still present in an earlier commit qualifies. A locally-written file that was
+never committed does not — and that distinction was the difference between the
+two files here.
+
+**Third lesson.** The missing `git add` path was invisible because nothing checks
+for it. `git status` after committing would have shown the file still modified.
+That check is now question four on the pre-commit checklist in
+`docs/change-control.md`.
