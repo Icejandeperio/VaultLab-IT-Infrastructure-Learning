@@ -516,3 +516,171 @@ two files here.
 for it. `git status` after committing would have shown the file still modified.
 That check is now question four on the pre-commit checklist in
 `docs/change-control.md`.
+
+---
+
+## 14 — ANS01 created in legacy BIOS mode instead of UEFI
+
+**Symptom.** Nothing failed. On the Ubuntu installer's storage summary, the first
+partition on `/dev/sda` read:
+
+```
+partition 1  new, BIOS grub spacer   1.000M
+```
+
+There was no partition mounted at `/boot/efi`.
+
+**Diagnosis.** That partition only exists on a legacy BIOS boot. A GPT disk booted
+by BIOS needs a tiny raw partition where GRUB stores part of itself. A UEFI boot
+creates something different instead — an EFI System Partition, FAT32, mounted at
+`/boot/efi`. Its absence meant the VM's firmware was BIOS.
+
+The New Virtual Machine wizard never asked. For the **Ubuntu 64-bit** guest
+profile it silently defaulted to BIOS, contradicting runbook 05, ADR-008, and
+every other VM in the lab.
+
+**Fix.** Powered the VM off from inside the installer, set **VM → Settings →
+Options → Advanced → Firmware type: UEFI**, and reran the installer from the
+start. The new summary showed `partition 1 new, primary ESP, to be formatted as
+fat32, mounted at /boot/efi`. The installer log later listed `grub-efi-amd64`,
+`grub-efi-amd64-signed`, and `shim-signed`, and `/sys/firmware/efi` exists on the
+running system.
+
+Powering off at that point was safe because nothing had been written. The
+installer is a live environment running from the ISO in memory; the destructive
+write happens only after the storage summary and a confirmation dialog. The first
+shutdown attempt used **Shut Down Guest** rather than **Power Off**, which paused
+at *"Please remove the installation medium, then press ENTER"* — the live
+system's normal shutdown prompt, not an error.
+
+**Enable secure boot** was greyed out after switching to UEFI and stayed greyed
+after saving. Cause not established. Two untested hypotheses: VMware does not
+offer Secure Boot for this guest profile, or the VM's virtual hardware version
+predates support. Accepted without Secure Boot, because unlike the firmware type
+it can generally be enabled later — `shim-signed` is already installed.
+
+**Lesson.** The cost of this fix depended entirely on *when* it was found. Before
+the storage write it cost five minutes of re-entering installer screens. After the
+write it would have cost a reinstall, because switching an installed BIOS system
+to UEFI leaves a disk with no EFI partition to boot from.
+
+Read the summary screen before confirming anything destructive, and read it for
+what it actually says rather than whether it looks roughly right. The whole fault
+was visible in one partition name. Same family as entry 04: a configuration that
+looks fine until you read what it produced.
+
+---
+
+## 15 — DC01 rejected as a time source by ANS01
+
+**Symptom.** ANS01's chrony was configured to prefer DC01 as its time source,
+alongside Ubuntu's default servers. After reload:
+
+```
+MS Name/IP address         Stratum Poll Reach LastRx Last sample
+^* ntp-nts-3.ps5.canonical.>     2   7   377   119  -6868us[-7777us] +/-  123ms
+^? DC01.corp.vaultlab.net        3   6    17    13  +2566ms[+2566ms] +/- 3629ms
+```
+
+`?` means chrony judged DC01 unusable. Forty minutes and a reboot later the same
+row read `+2804ms ... +/- 4072ms` — worse, not better.
+
+**Diagnosis, in layers.**
+
+*Network path.* `Reach 17` is octal `00001111` — four of four polls answered. The
+path from ANS01 to DC01 and DC01's NTP service were both working.
+
+*Which clock is wrong.* ANS01 agreed with five independent NTS-authenticated
+servers to within about 10 ms. DC01 disagreed with all of them by about 2.5
+seconds. DC01 was the outlier.
+
+*Why rejected.* The last column is the source's own error estimate. chrony refuses
+any source whose estimated error exceeds 3 seconds by default. DC01 advertised
+3.6, then 4.1.
+
+*Confirmed on DC01:*
+
+```powershell
+w32tm /query /status
+# Stratum: 3
+# Root Dispersion: 3.9253038s
+# ReferenceId: 0x0A0A0A01 (source IP: 10.10.10.1)
+# Last Successful Sync Time: 9/27/2026 9:18:33 PM
+# Poll Interval: 10 (1024s)
+```
+
+Root dispersion is a server's estimate of how far its clock could have drifted —
+how much accuracy it is willing to vouch for. Nearly 4 seconds.
+
+**The near-misdiagnosis.** ANS01 read 04:11 UTC on 28 September minutes before.
+Read naively, `Last Successful Sync Time: 9/27/2026 9:18:33 PM` meant DC01 had
+not synced for hours — a failing sync, pointing the investigation at FW01 and the
+network.
+
+The timestamp carried no timezone. If DC01 were on US Pacific time, then UTC−7 in
+late September, 04:18 UTC on the 28th *is* 9:18 PM on the 27th — the last sync
+was minutes ago. The minute-level match was too close to be coincidence.
+Confirmed:
+
+```powershell
+Get-TimeZone
+# Id : Pacific Standard Time
+# BaseUtcOffset : -08:00:00
+# SupportsDaylightSavingTime : True
+```
+
+The Id reads "Standard" while the clock was on daylight time. A timezone name
+describes a region; the actual offset depends on the date.
+
+With the timezone established the picture inverted: syncing **works**, and the
+high dispersion is present **immediately after a sync**. That makes it structural
+rather than staleness — the Windows time service at default settings polls
+infrequently, corrects gradually, and vouches for its accuracy conservatively.
+
+Runbook 03 never set DC01's timezone. Runbook 02 sets FW01's explicitly; DC01
+silently kept the installer default.
+
+**Fix.** Deliberately not applied by hand. A manual change to DC01 would be lost
+at the March 2027 rebuild unless it exists as code, so both corrections belong in
+`time-config.yml`:
+
+- The Windows time service's high-accuracy configuration, per Microsoft's
+  *Configuring systems for high accuracy* documentation — values taken from that
+  page at build time, not from memory
+- Timezone set to UTC+8, with no daylight saving, on **every** Windows host.
+  WS01's timezone is also unverified.
+
+Kerberos is unaffected in the meantime — its tolerance is five minutes and it
+works in UTC internally. The cost is Phase 4 log correlation, where a domain
+controller seconds out of step makes sub-second event ordering across hosts
+unreliable, and every timestamp read on DC01 displays in the wrong zone.
+
+Raising chrony's 3-second limit to force DC01 into use was rejected: it would make
+ANS01 prefer a clock known to be 2.5 seconds wrong over five accurate ones,
+degrading the good machine to match the bad one.
+
+The `dc01.sources` entry on ANS01 was kept, knowingly inert. It turns
+`chronyc sources` into a live measurement of DC01 against authenticated UTC, and
+DC01 joins automatically once its accuracy is fixed. If its error bound shrinks
+but its offset stays wrong, it stops overlapping the NTS sources and is marked `x`,
+never selected.
+
+**Two smaller errors made along the way.**
+
+The original ANS01 procedure said to edit `/etc/systemd/timesyncd.conf`. Ubuntu
+26.04 runs **chrony**; `systemctl is-active chrony systemd-timesyncd` returned
+`active` / `inactive`. Checked before editing, so no harm — but editing that file
+would have changed configuration no running service reads.
+
+DC01 was predicted to appear at stratum 8, extrapolated from entry 09's stratum 7
+reading. It appeared at stratum 3. FW01's upstream had improved since entry 09. A
+recorded observation had been treated as current state.
+
+**Lesson.** A timestamp without a timezone is not yet a fact. The same session had
+already flagged that `PST` on ANS01 meant Philippine Standard Time, not Pacific —
+and the same ambiguity then nearly misdirected a diagnosis. Log systems record UTC
+or an explicit offset for exactly this reason.
+
+Second: this is entry 09's shape, one level deeper. Configuration correct, network
+path correct, and the remaining cause the service's own behaviour. Rule out layers
+with evidence before touching configuration.
