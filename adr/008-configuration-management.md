@@ -49,6 +49,7 @@ every VM in the lab, permanently, to save memory on one.
 | vCPU | 2 (1 socket × 2 cores) |
 | RAM | 2 GB |
 | Disk | 20 GB, thin |
+| Firmware | UEFI; Secure Boot unavailable for this VM |
 | Address | `10.10.10.30` static, CORE (VMnet2) |
 
 **Amended from the original 24.04 LTS / 1 vCPU / 1 GB.** Both figures changed
@@ -66,7 +67,8 @@ media wins.
 *Accepted cost:* 26.04 is months old and most Ansible documentation assumes 22.04
 or 24.04. When something behaves unexpectedly — a package that is not where a
 guide says, a changed Python packaging rule — the OS version is a legitimate early
-suspect rather than a late one.
+suspect rather than a late one. As built, it ships Python 3.14 and ansible-core
+2.20.1.
 
 **2 vCPU rather than 1.** Ansible is I/O-bound and spends most of its life blocked
 on WinRM round-trips, which was the original argument for one core. But CPU is
@@ -77,6 +79,12 @@ across concurrent forks are all genuinely CPU-bound. Configured as one socket wi
 two cores — sockets imply NUMA boundaries on real hardware and count against
 Windows Server licensing, so "one socket, N cores" is the habit that stays correct
 when the guest is Windows.
+
+**Firmware.** The New Virtual Machine wizard does not ask, and for the Ubuntu
+64-bit guest profile it defaulted to BIOS. Caught on the installer's storage
+summary and corrected to UEFI before the disk was written; see troubleshooting
+entry 14. Secure Boot was greyed out and remains off. `shim-signed` is installed,
+so it can generally be enabled later without reinstalling if VMware allows it.
 
 ## Placement
 
@@ -102,6 +110,28 @@ the domain. See `docs/topology.md`.
   hand and not backported to code is lost at the next rebuild. This is a
   discipline cost, and it is the point.
 - Credentials live in Ansible Vault, never in inventory. A leaked secret stays
-  leaked — deleting it in a later commit does not remove it from history.
+  leaked — deleting it in a later commit does not remove it from history. The
+  vault password is never stored in a file on ANS01: its disk is not encrypted,
+  so a password file beside the vault it unlocks would make the vault pointless.
+  Use `--ask-vault-pass`.
+- **The tools holding domain credentials come from the less-guaranteed package
+  pool.** `ansible` and `python3-winrm` are both installed from Ubuntu's
+  **universe** component, which is community-maintained with best-effort security
+  updates rather than Canonical's guaranteed patching for **main**. Ubuntu Pro
+  extends guaranteed patching to universe and includes CIS and STIG hardening
+  tooling relevant to Phase 4. Canonical has offered a free personal tier; revisit
+  in Phase 4 and verify the current terms before relying on that.
+- **Time sync design.** ANS01 runs chrony and prefers DC01, the domain's
+  authoritative clock, with Canonical's NTS servers retained alongside. NTS
+  authenticates time responses; DC01's Windows time service speaks plain,
+  unauthenticated NTP. Preferring DC01 trades an authenticated primary for an
+  unauthenticated one, accepted for two reasons: Kerberos cares about agreement
+  with DC01, and chrony marks any source that disagrees with the majority as a
+  falseticker, so the four NTS sources act as an authenticated cross-check against
+  a spoofed DC01. `prefer` selects only among sources that agree. The residual
+  risk is spoofing on CORE itself, where an attacker already has larger options.
+  As built, chrony rejects DC01 as unusable — see troubleshooting entry 15 — so
+  ANS01 currently syncs to the NTS sources until DC01's accuracy is fixed in
+  `time-config.yml`.
 - The measured time of a full rebuild becomes a stated recovery time objective.
   Being able to state an RTO with evidence behind it is what this phase produces.

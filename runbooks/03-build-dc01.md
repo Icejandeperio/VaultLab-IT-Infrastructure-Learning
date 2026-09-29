@@ -3,6 +3,10 @@
 **Result:** An activated, correctly addressed domain controller hosting `corp.vaultlab.net`
 
 **Status:** Sections 1–8 complete. DC01 is a working domain controller.
+**Known gap on the running DC01:** timezone was never set and is still the
+installer default, US Pacific. The correction is deliberately not applied by hand —
+it belongs in `time-config.yml` with the time-accuracy fix. See
+`docs/troubleshooting-log.md`, entry 15.
 
 Do not install Windows Server until ready to build. The 180-day clock starts at
 installation, not first use. See `docs/licensing-clock.md`.
@@ -126,6 +130,24 @@ If `/ato` returns `0xC004E028`, a request is already in flight — wait, then ch
 Time remaining, and Remaining Windows rearm count, read from `/dlv`. Prefer Time
 remaining over `slmgr /xpr` for the expiry date; it is expressed in minutes and
 does not depend on the machine's date format.
+
+**Set the timezone.** Windows Server installs default to a US timezone and the
+installer never asks. Kerberos works in UTC internally, so a wrong timezone does not
+break authentication — but every timestamp displayed on the server, including the
+event logs Phase 4 collects, is shown in the wrong zone. Runbook 02 sets FW01
+explicitly; this step does the same for Windows.
+
+Find a UTC+08:00 zone with no daylight saving rather than guessing its ID — the
+Philippines observes none:
+
+```powershell
+Get-TimeZone -ListAvailable | Where-Object { $_.BaseUtcOffset -eq '08:00:00' -and -not $_.SupportsDaylightSavingTime } | Select-Object Id, DisplayName
+Set-TimeZone -Id "<the Id you chose>"
+Get-TimeZone
+```
+
+Record which `Id` you used. Every Windows host in the lab should use the same one,
+and `time-config.yml` enforces it from Phase 2 onward.
 
 **Rename, then reboot:**
 
@@ -325,6 +347,7 @@ the habit here, where it costs nothing.
 
 - [ ] `hostname` returns `DC01` **(checked before promotion)**
 - [ ] `slmgr /dlv` shows Licensed, 180 days, and the figures recorded in `docs/licensing-clock.md`
+- [ ] `Get-TimeZone` shows UTC+08:00 with no daylight saving
 - [ ] All three FSMO roles held by `DC01.corp.vaultlab.net`
 - [ ] `dcdiag /v` passes every test
 - [ ] `dcdiag /test:DNS /v` shows PASS across all applicable columns

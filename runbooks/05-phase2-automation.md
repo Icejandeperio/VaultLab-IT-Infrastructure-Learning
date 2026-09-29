@@ -4,7 +4,8 @@
 **Result:** The forest rebuildable from code, DHCP served by Windows Server via a relay, and an internal certificate authority
 **Cost:** Zero
 
-**Status:** Not started. ADRs 008, 009, 010 written and accepted.
+**Status:** In progress. §2 complete — ANS01 built and verified, snapshot
+`01-ans01-base`. §3, WinRM on DC01, next. ADRs 008, 009, 010 written and accepted.
 
 ---
 
@@ -83,103 +84,287 @@ Profile B runs.
 
 ## 2. Build ANS01
 
-| Setting | Value |
-|---|---|
-| Guest OS | Linux → Ubuntu 64-bit |
-| Name / location | `ANS01` / `C:\Lab\VMs\ANS01` |
-| Firmware | UEFI |
-| Processors | 1 socket × 2 cores |
-| Memory | 2048 MB |
-| Disk | 20 GB, split, not preallocated |
-| Network | **Custom → VMnet2 (CORE)** |
-| Address | `10.10.10.30` static |
+**Complete.** This section records the build as it was actually done, including
+the places where the original plan was wrong. Rationale for the OS version, core
+count, and CORE placement is in ADR-008.
 
-Ubuntu Server **26.04.1 LTS**, minimal install, OpenSSH server enabled. Decline
-Easy Install — choose *"I will install the operating system later"* and attach the
-ISO in Customize Hardware. Easy Install writes an autoinstall answer file and
-takes the partitioning and user-creation decisions away from you.
+**Before starting:** FW01 and DC01 must be running. CORE has no DHCP server and
+ANS01 resolves names through DC01. With either one off, the installer's mirror
+test fails in a way that looks like an installer problem.
 
-Remove the Sound Card and USB Controller.
+### 2.1 Create the VM
 
-Rationale for the OS version, the core count, and the CORE placement is in
-ADR-008. Set the hostname to `ANS01` during the installer so the VM name and the
-machine's own name agree.
+New Virtual Machine → **Custom**. Decline Easy Install — *"I will install the
+operating system later"* — so partitioning and user creation stay under your
+control.
 
-### Static addressing
+| Setting | Value | Why |
+|---|---|---|
+| Guest OS | Linux → **Ubuntu 64-bit** | Plain **Ubuntu** is the 32-bit profile. The ISO is `amd64`; match the profile to the ISO's architecture |
+| Name / location | `ANS01` / `C:\Lab\VMs\ANS01` | |
+| SCSI controller | **LSI Logic** (default) | The Linux kernel carries the driver. Contrast runbook 03, where Server 2025 needs LSI Logic SAS. The right controller is a property of the guest OS |
+| Disk | Create a new virtual disk, 20 GB, split, **not** preallocated | Never a physical disk — it disables snapshots and exposes a real drive to the installer |
+| Processors | **1 processor × 2 cores** | The wizard defaults to 1 core. It came back as 1 once during this build — verify the Settings summary reads **2** |
+| Memory | 2048 MB | |
+| Network | **Custom → VMnet2** | See below |
 
-Ubuntu Server uses netplan. Verify the actual filename rather than assuming:
+**Network.** The wizard may offer only Bridged, NAT, and Host-only. None of those
+is VMnet2 — they map to VMnet0, VMnet8, and VMnet1. Pick any as a placeholder and
+set **Custom: Specific virtual network → VMnet2** in Customize Hardware. The label
+`VMnet2 (Host-only)` describes the switch *type* configured in runbook 01, not the
+Host-only radio button.
 
-```bash
-ls /etc/netplan/
-sudo nano /etc/netplan/<the file you found>
+**Remove** the Sound Card and USB Controller.
+
+### 2.2 Firmware — set it explicitly
+
+**VM → Settings → Options → Advanced:**
+
+- **Firmware type: UEFI.** The wizard never asks, and for the Ubuntu 64-bit
+  profile it defaulted to **BIOS**. This must be right before the storage step —
+  an installed BIOS system cannot be switched to UEFI without a reinstall. See
+  troubleshooting entry 14.
+- **Enable secure boot** — tick it if available. It was greyed out on this build.
+  Cause unconfirmed; `shim-signed` is installed, so it can generally be enabled
+  later.
+- **Disable side channel mitigations** — ticked, matching FW01 and DC01.
+
+Reopen Settings after saving and confirm the firmware change stuck.
+
+### 2.3 Installer
+
+1. GRUB → **Try or Install Ubuntu Server**
+2. Language English, keyboard default. Skip any installer update offer.
+3. Install type → **Ubuntu Server**, not *minimized* — minimized strips man pages
+   and interactive tools. Third-party drivers **off**: they are for physical
+   hardware, and the kernel supports VMware's virtual devices natively.
+4. **Network — read the screen before pressing Enter.** DHCP fails, which is
+   expected: CORE has no DHCP server. The cursor defaults to **Continue without
+   network**. Arrow up to the interface instead → **Edit IPv4 → Manual**:
+
+   | Field | Value |
+   |---|---|
+   | Subnet | `10.10.10.0/24` |
+   | Address | `10.10.10.30` |
+   | Gateway | `10.10.10.1` |
+   | Name servers | `10.10.10.10` |
+   | Search domains | `corp.vaultlab.net` |
+
+   **Record the interface name shown.** On this build it was **`ens32`**, not the
+   `ens33` earlier drafts assumed — see `docs/interface-mapping.md`.
+
+   **Check:** the interface shows `static 10.10.10.30/24` and the button reads
+   **Done**, not *Continue without network*.
+5. Proxy → blank. ANS01 reaches the internet through its gateway; a proxy is a
+   different mechanism, and entering one would break every download.
+6. Mirror → wait for **"This mirror location passed tests."** That single test
+   exercises the static address, the gateway, DNS through DC01, and FW01's NAT.
+7. Guided storage → **Use an entire disk**, **LVM on**, **LUKS off**.
+
+   LUKS would require a passphrase at the console on every boot, breaking
+   unattended startup and the rebuild drill. The accepted cost: anything written
+   to ANS01's disk in plaintext is readable from the VMDK. So **never store the
+   vault password in a file on ANS01** — use `--ask-vault-pass`.
+8. **Storage summary — two checks before Done:**
+   - Partition 1 must be **primary ESP, FAT32, mounted at `/boot/efi`**. If it
+     reads *BIOS grub spacer*, the firmware is BIOS — power off and fix 2.2. Safe
+     at this point: nothing has been written yet.
+   - **`ubuntu-lv` is left at roughly half the volume group by default.** Select it
+     → **Edit** → set Size to the maximum shown. Free space should drop to zero.
+
+   Then **Done → Continue** on the destructive-action dialog. This is the point
+   of no return.
+9. Profile:
+   - Server name **`ans01`** — lowercase is the Linux convention; DNS is
+     case-insensitive
+   - Username **`vlabadmin`** — a **local** account, deliberately not named like
+     the AD accounts; ANS01 is not domain-joined
+   - Password — a password manager, never the repo. Different from the AD
+     passwords: ANS01 will hold the vault containing `jcruz-adm`'s credentials
+10. Ubuntu Pro → **Skip**. See ADR-008 for why it is worth revisiting in Phase 4.
+11. SSH → **Install OpenSSH server**, password authentication **on** — temporarily.
+    There are no keys yet, so a password is the only way in for the first
+    connection. Disabling it once key-based login works is an open item.
+12. Featured snaps → **none**. Snaps update themselves automatically in the
+    background; on a machine holding domain credentials, software should change
+    only when you run the update. ANS01 stays on apt.
+13. **Reboot Now.** At *"Please remove the installation medium"*: **VM → Settings
+    → CD/DVD** → untick **Connected** and **Connect at power on** → OK → Enter.
+
+On first boot, setup messages print *after* the `login:` prompt and look like the
+prompt vanished. Press Enter for a fresh one.
+
+### 2.4 First connection — verify the host key
+
+From PowerShell on the Windows host:
+
+```powershell
+ssh vlabadmin@10.10.10.30
 ```
 
-Confirm the interface name first — `ens33` is typical on VMware but depends on
-PCI slot and firmware:
+The first connection shows the server's `ED25519 key fingerprint is SHA256:...`.
+**Compare it character-for-character against the `SHA256:` line printed on the
+ANS01 console at first boot** before typing `yes`.
+
+This is trust on first use: SSH authenticates the server before you authenticate
+yourself, and the first connection is the only one with no stored reference. The
+console is a channel no one can sit in the middle of. After `yes`, the key is
+stored in `known_hosts` and every later connection is checked against it. A later
+warning that the host key **has changed** means either ANS01 was rebuilt or
+something is impersonating it — investigate before dismissing.
+
+Work over SSH from here on. The VMware console has no copy-paste.
+
+**Verify the build against spec:**
 
 ```bash
-ip -br link
+hostnamectl                                          # ans01
+nproc                                                # 2
+[ -d /sys/firmware/efi ] && echo UEFI || echo BIOS   # UEFI
+df -h /                                              # ~17 GB
+ip -br addr                                          # ens32 UP 10.10.10.30/24
+systemctl is-active ssh                              # active
 ```
 
-```yaml
-network:
-  version: 2
-  ethernets:
-    <the interface you found>:
-      dhcp4: no
-      addresses: [10.10.10.30/24]
-      routes:
-        - to: default
-          via: 10.10.10.1
-      nameservers:
-        addresses: [10.10.10.10]
-        search: [corp.vaultlab.net]
+The `/sys/firmware/efi` directory only exists when the kernel was booted by UEFI,
+which makes it the definitive check regardless of what the VM settings claim.
+
+### 2.5 Baseline
+
+**Updates.**
+
+```bash
+sudo apt update && sudo apt full-upgrade -y
+apt list --upgradable
+```
+
+`full-upgrade` rather than `upgrade`, because plain `upgrade` never removes a
+package and can hold back updates that need dependencies swapped. The second
+command should list nothing — proof the first run completed.
+
+The output includes harmless noise worth recognising: `File descriptor ... leaked
+on vgs invocation` is an LVM warning triggered by the bootloader updater, and
+`os-prober will not be executed` means GRUB no longer scans for other operating
+systems. `Service restarts being deferred: dbus.service` is not noise — dbus
+cannot be safely restarted on a live system, so reboot before the snapshot.
+
+**Timezone.**
+
+```bash
+sudo timedatectl set-timezone Asia/Manila
+timedatectl
+```
+
+The output shows `Asia/Manila (PST, +0800)`. **`PST` here is Philippine Standard
+Time**, not Pacific — timezone abbreviations are ambiguous, which is why logs
+should record UTC or an explicit offset.
+
+**Time sync — Ubuntu 26.04 runs chrony, not timesyncd.** Earlier drafts of this
+runbook said to edit `/etc/systemd/timesyncd.conf`. Check which service is actually
+running before configuring anything:
+
+```bash
+systemctl is-active chrony systemd-timesyncd
+```
+
+On this build: `active`, `inactive`. Confirm chrony reads a drop-in directory,
+then add DC01:
+
+```bash
+grep sourcedir /etc/chrony/chrony.conf
+echo "server 10.10.10.10 iburst prefer" | sudo tee /etc/chrony/sources.d/dc01.sources
+sudo chronyc reload sources
+sleep 20
+chronyc sources -v
+```
+
+A drop-in file rather than editing `chrony.conf` directly: package updates may
+replace the main config, while a separate file is yours and survives. Canonical's
+NTS sources are kept alongside DC01 as an authenticated cross-check — see ADR-008
+for the trade-off.
+
+**Expected result as built:** DC01 appears marked **`?`** — rejected as unusable,
+because its Windows time service advertises about 4 seconds of uncertainty and
+chrony refuses anything above 3. ANS01 syncs to the NTS sources meanwhile. This is
+correct behaviour, not a fault to work around; the fix is on DC01, in
+`time-config.yml`. See troubleshooting entry 15. **Do not raise chrony's limit.**
+
+The `dc01.sources` line is knowingly inert until then, and it makes
+`chronyc sources` a live measurement of DC01's clock against authenticated time.
+
+**VMware tools.**
+
+```bash
+systemctl is-active open-vm-tools
+```
+
+Should be `active` — the installer detects VMware and installs it.
+
+### 2.6 Ansible
+
+Check what the distribution provides before installing:
+
+```bash
+apt-cache policy ansible python3-winrm
 ```
 
 ```bash
-sudo netplan apply
-ip addr show
-ping -c3 10.10.10.10
-nslookup dc01.corp.vaultlab.net
-```
-
-Record the MAC and interface name in `docs/interface-mapping.md`.
-
-### Install Ansible
-
-Check what the distribution actually provides before pasting an install command:
-
-```bash
-apt-cache policy ansible
-apt-cache policy python3-winrm
-```
-
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y ansible git
+sudo apt install -y ansible python3-winrm git
 ansible --version
-```
-
-`pywinrm` is what lets Ansible speak to Windows. Without it, Windows hosts fail
-with a connection plugin error that does not obviously name the missing library.
-Prefer the distribution package if `apt-cache policy python3-winrm` shows one
-available. If not, pip is the fallback — and on a distribution with an
-externally-managed Python environment, that needs either a virtual environment or
-an explicit override:
-
-```bash
-pip3 install pywinrm --break-system-packages
-```
-
-`--break-system-packages` overrides PEP 668, which exists to stop pip from
-overwriting files the system package manager owns. Acceptable on a single-purpose
-control node; not a habit to carry to a shared machine.
-
-Confirm it imports:
-
-```bash
 python3 -c "import winrm; print(winrm.__file__)"
+ansible-galaxy collection list microsoft.ad
 ```
+
+**As built:**
+
+| Item | Result |
+|---|---|
+| `ansible` package | 13.1.0 — the bundle of ansible-core plus curated collections |
+| ansible-core | 2.20.1 — the engine; `ansible --version` reports this, not 13.x |
+| Python | 3.14.4 |
+| `pywinrm` | From apt, under `/usr/lib/python3/dist-packages/winrm/` |
+| `microsoft.ad` | 1.10.0, bundled — no separate install |
+
+`pywinrm` is what lets Ansible speak to Windows. It came from apt, so no pip
+install and no `--break-system-packages` override were needed — apt tracks and
+updates it with everything else. If a future rebuild finds no apt candidate, pip
+is the fallback, and on a system with an externally-managed Python environment it
+needs either a virtual environment or that override. Acceptable on a
+single-purpose control node; not a habit for a shared machine.
+
+Both `ansible` and `python3-winrm` come from Ubuntu's **universe** component —
+see ADR-008.
+
+### 2.7 Close out
+
+```bash
+sudo reboot
+```
+
+Reconnect and confirm the state survived a reboot before capturing it — this is
+the first boot since the upgrade touched `netplan.io` and deferred dbus:
+
+```bash
+ip -br addr
+systemctl is-active ssh chrony
+chronyc sources
+```
+
+Then `sudo poweroff`, and **VM → Snapshot → Take Snapshot → `01-ans01-base`**.
+Confirm it appears in Snapshot Manager rather than assuming the dialog succeeded.
+
+### 2.8 Observed, not configured
+
+After the upgrade, the console login began printing `Try contacting this VM's SSH
+server via 'ssh vsock%<id>' from host.` — systemd exposing SSH over vsock, a
+host-to-guest channel with no network path. Recorded in
+`docs/interface-mapping.md`.
+
+### 2.9 Open items from this build
+
+- Disable SSH password authentication once key-based login is set up
+- Secure Boot, if VMware ever offers it for this VM
+- DC01 accepted by chrony — depends on `time-config.yml`
 
 ---
 
@@ -380,8 +565,15 @@ them against DC01 reports **zero changes**.
         - Groups
 ```
 
+**Do not run `ansible-galaxy collection install microsoft.ad`.** The collection
+is already bundled with the `ansible` package (1.10.0 as built). Ansible searches
+`~/.ansible/collections` **before** the bundled location, so a separate install
+would place a second copy there and silently shadow the bundled one. Two copies at
+possibly different versions, with the one that runs decided by search order, is
+behaviour that will not reproduce on a rebuild. Install a separate copy only when a
+newer version is deliberately needed — and record it when you do.
+
 ```bash
-ansible-galaxy collection install microsoft.ad
 ansible-playbook -i inventory/hosts.yml playbooks/ou-structure.yml --ask-vault-pass
 ```
 
@@ -390,6 +582,27 @@ means the playbook does not describe reality** — fix the playbook, not the dom
 
 Then write playbooks for users and groups, DNS zones and forwarders, and time
 configuration.
+
+### `time-config.yml` — scope expanded by the ANS01 build
+
+This playbook does more than reproduce Phase 1. Troubleshooting entry 15 found two
+problems on DC01 that were deliberately left for it:
+
+- **Time accuracy.** Configure the Windows time service for high accuracy on
+  DC01, following Microsoft's *Configuring systems for high accuracy*
+  documentation. Take the registry values from that page at build time, not from
+  memory.
+- **Timezone.** Set UTC+08:00 with no daylight saving on **every** Windows host.
+  DC01 is on US Pacific; WS01 is unverified. Use the same zone `Id` everywhere and
+  record which one.
+
+Unlike the other Phase 2 playbooks, this one is **expected to report `changed`**
+on its first run — it corrects state rather than describing it. The second run
+must report `changed=0`. That pair of runs is the idempotence lesson in its
+cleanest form.
+
+**Success check, from ANS01:** `chronyc sources` shows DC01 marked `*` or `+`
+instead of `?`.
 
 ---
 
@@ -424,8 +637,8 @@ run the drill again.
 | Memory | 3072 MB |
 | Disk | 60 GB |
 
-Build per runbook 03 sections 1–5. **Same hostname gate applies**, and activate
-within 10 days.
+Build per runbook 03 sections 1–5. **Same hostname gate applies**, the timezone
+step applies, and activate within 10 days.
 
 **Record SRV01's licensing clock in `docs/licensing-clock.md` at build time.**
 Run `slmgr /dlv` after activation and write down License Status, Time remaining,
@@ -554,12 +767,16 @@ Update `docs/address-plan.md` if WS01's address changed.
 
 ## 9. Acceptance criteria
 
-- [ ] ANS01 built, addressed, resolving `corp.vaultlab.net`
-- [ ] ANS01 MAC and interface name recorded in `docs/interface-mapping.md`
+- [x] ANS01 built on UEFI, addressed, resolving `corp.vaultlab.net`
+- [x] ANS01 host key fingerprint verified against the console on first connection
+- [x] ANS01 MAC and interface name recorded in `docs/interface-mapping.md`
+- [x] Snapshot `01-ans01-base` exists
 - [ ] `ansible-inventory --host dc01` shows credentials resolved from vault
 - [ ] `ansible domain_controllers -m win_ping` returns `pong`
 - [ ] `git check-ignore` confirms `vault.yml` is excluded
 - [ ] Playbooks run against existing DC01 with `changed=0`
+- [ ] `time-config.yml` run twice: `changed` then `changed=0`; DC01 no longer `?`
+      in ANS01's `chronyc sources`
 - [ ] A DC rebuilt from ISO plus playbooks passes runbook 03's full checklist
 - [ ] Rebuild time recorded as a stated RTO
 - [ ] SRV01 domain-joined, ADCS installed, `certutil -ping` succeeds
