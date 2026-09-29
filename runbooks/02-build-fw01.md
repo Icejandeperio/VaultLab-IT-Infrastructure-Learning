@@ -40,8 +40,10 @@ Customize Hardware.
 | 6 | Custom → VMnet6 | OPT4 / DMZ (em5) |
 
 Adapter type is chosen automatically from the guest OS and is **not** settable
-from the GUI Advanced button — that only exposes MAC and bandwidth. E1000
-(`Intel 82574L`) is what you get, hence `em*` interface names.
+from the GUI Advanced button — that only exposes MAC and bandwidth. For the FreeBSD
+14 profile you get **E1000e** (`Intel 82574L`), handled by FreeBSD's `em` driver,
+hence `em*` interface names. Other guest profiles get different models — see
+`docs/interface-mapping.md`.
 
 Then **VM → Settings → Options → Advanced** → tick **Disable side channel
 mitigations**.
