@@ -131,6 +131,44 @@ it. Segmentation only constrains what crosses a boundary — worth being explici
 about, because it is easy to assume a rule is protecting a flow that never passes
 through the firewall at all.
 
+## CORE → internet: what depends on it
+
+CORE currently reaches the internet through FW01's NAT with no restriction. Nothing
+in the Phase 4 plan explicitly tightens CORE's egress, but if it is ever
+tightened, these flows break — some of them silently.
+
+| Host | Flow | Port | Protocol | Breaks what |
+|---|---|---|---|---|
+| ANS01 | Package mirror | 80, 443 | TCP | `apt update`, security patching |
+| ANS01 | NTS key exchange | **4460** | TCP | Authenticated time |
+| ANS01 | NTP | 123 | UDP | Time sync |
+
+**The time flows are the dangerous ones.** ANS01's accepted time sources are
+Canonical's NTS servers. NTS — Network Time Security — authenticates NTP by first
+establishing keys over a separate TCP connection on port 4460; the time queries
+themselves then use UDP 123. Allowing 123 and forgetting 4460 blocks the key
+exchange, and the NTS sources become unreachable.
+
+ANS01 also queries DC01, but chrony currently rejects DC01 as unusable — see
+`troubleshooting-log.md`, entry 15. Block ANS01's NTS egress while DC01 is still
+rejected and ANS01 has **no** accepted time source. It free-runs on its own clock
+and drifts, with no error anywhere — just `chronyc sources` showing nothing
+marked `*`.
+
+Fix DC01's time accuracy before tightening CORE egress, or permit 4460 and 123
+explicitly when you do.
+
+DNS and the domain controller's own time need no CORE egress rule: DC01 forwards
+DNS to FW01 and syncs time from FW01, and FW01 makes the upstream requests itself.
+
+## The host management path in Phase 3
+
+The Windows host reaches ANS01 over SSH on TCP 22 today through its adapter on
+CORE, which bypasses the firewall entirely (ADR-007). When Phase 3 replaces that
+adapter with a WireGuard tunnel terminating on FW01, SSH to ANS01 becomes transit
+traffic and needs an explicit rule from the tunnel to `10.10.10.30`. Without it,
+retiring the adapter also retires your only way into the control node.
+
 ## Segment intent
 
 | From → To | Policy |
@@ -140,6 +178,7 @@ through the firewall at all.
 | CLIENT → RED | Deny |
 | CORE → CLIENT | Deny by default; WinRM from the control node only |
 | CORE → SEC | Agent traffic to the SIEM, initiated from CORE |
+| CORE → internet | Permitted today; see the dependency table above before restricting |
 | RED → CLIENT, DMZ | Permit — this is the attack path |
 | RED → CORE | Deny by default; opened deliberately per exercise |
 | SEC → anywhere | Deny outbound initiation; receives only |

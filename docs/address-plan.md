@@ -23,7 +23,7 @@ adapter. Do not assume the gateway is `.1` on that segment.
 | FW01 | `.1` on every segment | all | static | Built |
 | DC01 | 10.10.10.10 | CORE | static | Built |
 | SRV01 | 10.10.10.11 | CORE | static | Planned — Phase 2 |
-| ANS01 | 10.10.10.30 | CORE | static | Planned — Phase 2 |
+| ANS01 | 10.10.10.30 | CORE | static | Built |
 | WS01 | 10.10.20.139 | CLIENT | DHCP | Built |
 | SIEM01 | 10.10.30.20 | SEC | static | Planned — Phase 4 |
 | KALI01 | 10.10.40.20 | RED | static | Planned — Phase 5 |
@@ -33,6 +33,10 @@ WS01's address is a DHCP lease, not a reservation. It is recorded because Ansibl
 inventory currently points at it by address, and because a changed lease is a
 plausible cause the next time a playbook cannot reach it. Nothing else in the lab
 should depend on that number — WS01 is found by name.
+
+ANS01's static address was set in the Ubuntu installer rather than by editing
+netplan afterward. The installer writes the netplan file itself; read it with
+`cat /etc/netplan/*.yaml` rather than assuming its name or contents.
 
 ## Allocation convention
 
@@ -59,7 +63,8 @@ DNS, not by address.
 
 ANS01 is static despite only pointing outward, because it holds credentials for
 tier-zero systems and will appear in firewall rules once CLIENT is tightened to
-default-deny in Phase 4.
+default-deny in Phase 4. CORE also has no DHCP server at all, so the installer's
+automatic configuration fails there by design.
 
 ## DHCP
 

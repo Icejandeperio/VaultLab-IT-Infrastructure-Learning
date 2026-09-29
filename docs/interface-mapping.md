@@ -14,6 +14,8 @@ guest, not assumed from ordering.
 | ethernet4 | `00:0c:29:43:4f:40` | VMnet5 | em4 | OPT3 (RED) | 10.10.40.1/24 |
 | ethernet5 | `00:0c:29:43:4f:4a` | VMnet6 | em5 | OPT4 (DMZ) | 10.10.99.1/24 |
 
+Adapter model: **E1000e** (Intel 82574L).
+
 ## DC01
 
 | VMX device | MAC | VMnet | Windows | Address |
@@ -33,25 +35,74 @@ next time WS01 is powered on, or during the LTSC rebuild.
 
 ## ANS01
 
-Single adapter on **VMnet2 (CORE)**, `10.10.10.30/24` static. Record the MAC and
-the Linux interface name at build time. Ubuntu's predictable network interface
-naming typically produces `ens33` on VMware, but that depends on PCI slot and
-firmware and is not guaranteed — confirm with `ip link` rather than writing
-`ens33` into netplan on faith.
+| VMX device | MAC | VMnet | Linux | Address |
+|---|---|---|---|---|
+| ethernet0 | `00:0c:29:17:45:22` | VMnet2 | **ens32** | 10.10.10.30/24 static |
+
+Adapter model: **E1000** (Intel 82545EM). Read from the Ubuntu installer's network
+screen and confirmed on the running system with `ip -br link`.
+
+**`ens32`, not `ens33`.** Earlier drafts of runbook 05 assumed `ens33`, the name
+commonly seen on VMware. Linux's predictable interface names are derived from the
+PCI slot the virtual NIC occupies, so the name depends on this VM's hardware
+layout, not on a convention. A netplan file written for `ens33` would have
+configured an interface that does not exist, and the machine would have come up
+with no network and no error. This is the verify-don't-assert rule paying off.
+
+### vsock — a path outside the VMnet model
+
+After the first package upgrade, ANS01's console login began printing:
+
+```
+Try contacting this VM's SSH server via 'ssh vsock%<id>' from host.
+```
+
+**vsock** is a host-to-guest communication channel that uses no network at all —
+no IP address, no VMnet, no firewall. Recent systemd releases automatically expose
+SSH over it and print that hint.
+
+It extends no trust: only the hypervisor host can reach a guest over vsock, and the
+host already controls the guest completely — its disk, its memory, its power
+state. It is the same trust relationship as ADR-007's management adapter, one
+layer lower. The Windows SSH client addresses hosts by name or IP, so it is not a
+practical path from this host in any case.
+
+Recorded because it is a listener on a tier-zero machine that was never
+deliberately configured, and a path the network segmentation does not govern. If
+Phase 4 hardening wants it removed, systemd provides a boot option to disable the
+automatic vsock SSH listener — confirm the exact switch at that point rather than
+from memory.
+
+## Adapter models differ by guest profile
+
+VMware chooses the virtual NIC model from the **guest OS type** selected when the
+VM is created, and the choice is not exposed in the Workstation GUI:
+
+| VM | Guest OS type | Adapter | Emulated chip | Guest driver |
+|---|---|---|---|---|
+| FW01 | FreeBSD 14 64-bit | E1000e | Intel 82574L | `em` |
+| ANS01 | Ubuntu 64-bit | E1000 | Intel 82545EM | `e1000` |
+
+An earlier version of this file labelled FW01's adapter "E1000 (Intel 82574L)."
+The 82574L is VMware's **E1000e**; plain E1000 is the 82545EM, as ANS01 shows.
+Both are Intel gigabit models and FreeBSD's `em` driver handles both, which is why
+the mislabel never caused a fault — but a label that is wrong and harmless today
+is the kind that misleads a later diagnosis.
+
+VMXNET 3, VMware's paravirtualized adapter, is not selectable from the Workstation
+GUI — it requires editing the VMX file directly.
 
 ## How to verify
-
-Adapter type is E1000 (`Intel 82574L`), which is why interfaces enumerate as
-`em*` rather than `vmx*`. VMXNET 3 is not selectable from the Workstation GUI —
-it requires editing the VMX file directly.
 
 **Host side:**
 
 ```powershell
 Select-String -Path C:\Lab\VMs\FW01\FW01.vmx `
-  -Pattern "^ethernet\d\.(vnet|connectionType|generatedAddress) " |
+  -Pattern "^ethernet\d\.(vnet|connectionType|generatedAddress|virtualDev) " |
   ForEach-Object { $_.Line.Trim() } | Sort-Object
 ```
+
+The `virtualDev` line, where present, names the adapter model.
 
 **Guest side** — OPNsense console option 8 (Shell):
 
@@ -65,8 +116,9 @@ On a Linux guest such as ANS01:
 ip -br link
 ```
 
-Match the final octet of each MAC. VMware derives all six from the VM's UUID with
-an offset of 0, 10, 20, 30, 40, 50 — so only the last byte differs.
+Match the final octet of each MAC. On a multi-NIC VM, VMware derives all MACs
+from the VM's UUID with an offset of 0, 10, 20, 30, 40, 50 — so only the last byte
+differs.
 
 ## Why verify rather than assume
 

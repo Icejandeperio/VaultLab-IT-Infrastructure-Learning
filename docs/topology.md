@@ -16,7 +16,7 @@ graph TD
     CORE --> DC01[DC01 · 10.10.10.10<br/>WS2025 Core · AD DS · DNS · PDC · KDC]
     CORE -.-> HOST[Windows host · 10.10.10.5<br/>mgmt only · ADR-007]
     CORE -.planned.-> SRV01[SRV01 · 10.10.10.11<br/>Enterprise CA · ADR-010]
-    CORE -.planned.-> ANS01[ANS01 · 10.10.10.30<br/>Ansible control node · ADR-008]
+    CORE --> ANS01[ANS01 · 10.10.10.30<br/>Ubuntu 26.04 · Ansible control node · ADR-008]
     CLIENT --> WS01[WS01 · 10.10.20.139<br/>Windows 11 · domain-joined]
     SEC -.planned.-> SIEM01[SIEM01 · 10.10.30.20 · Wazuh]
     RED -.planned.-> KALI01[KALI01 · 10.10.40.20]

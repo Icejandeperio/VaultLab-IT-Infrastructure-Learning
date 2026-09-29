@@ -22,7 +22,7 @@ graph TD
     FW -->|em5| DMZ[DMZ · 10.10.99.0/24]
 
     CORE --> DC01[DC01 · 10.10.10.10<br/>Windows Server 2025 Core<br/>AD DS · DNS · PDC · KDC]
-    CORE -.planned.-> ANS01[ANS01 · 10.10.10.30<br/>Ansible control node]
+    CORE --> ANS01[ANS01 · 10.10.10.30<br/>Ubuntu 26.04 · Ansible control node]
     CORE -.planned.-> SRV01[SRV01 · 10.10.10.11<br/>Certificate authority]
     CLIENT --> WS01[WS01 · 10.10.20.139<br/>Windows 11 · domain-joined]
     SEC -.planned.-> SIEM01[SIEM01 · 10.10.30.20<br/>Wazuh]
@@ -48,7 +48,7 @@ cores rather than 16 threads. See [`docs/resource-budget.md`](docs/resource-budg
 
 **Phase 1 complete.** Firewall, domain controller, and domain-joined client
 built and verified end to end. **Phase 2 in progress** — ADRs 008–010 written,
-ANS01 next.
+ANS01 built and verified, WinRM on DC01 next.
 
 | Component | Status | Notes |
 |---|---|---|
@@ -61,7 +61,8 @@ ANS01 next.
 | DC01 — Directory structure | Complete | VAULTLAB OU tree, split daily/privileged accounts |
 | WS01 — Windows 11 client | Complete | Domain-joined, AES-256 Kerberos, dynamic DNS |
 | WS01 — rebuild on LTSC | Pending | Licensed to 3 Dec 2026, 0 rearms — see troubleshooting 12 |
-| ANS01 — Ansible control node | Not started | Phase 2, next |
+| ANS01 — Ansible control node | Complete | Ubuntu 26.04.1, UEFI, ansible-core 2.20.1, `microsoft.ad` bundled |
+| DC01 — time accuracy | Pending | Rejected as a time source by ANS01; Pacific timezone — see troubleshooting 15 |
 | SRV01 — certificate authority | Not started | Phase 2 |
 | SIEM01 — Wazuh | Not started | Phase 4 |
 | Segmentation hardening | Not started | Temporary allow-all in place — Phase 4 |
@@ -74,7 +75,7 @@ SRV records, the CLIENT→CORE firewall path carried the traffic, Kerberos
 authenticated with AES-256, the machine account landed in the correct OU, and
 clock skew stayed inside Kerberos tolerance.
 
-Thirteen real faults were diagnosed and documented along the way. See
+Fifteen real faults were diagnosed and documented along the way. See
 [`docs/troubleshooting-log.md`](docs/troubleshooting-log.md) — the most useful
 document in this repository.
 
