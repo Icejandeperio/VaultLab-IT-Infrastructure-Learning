@@ -18,8 +18,8 @@ credentials*
 # ── Ansible ───────────────────────────────────────────────
 *.retry
 inventory-prod*
-host_vars/*/vault.yml
-group_vars/*/vault.yml
+**/host_vars/*/vault.yml
+**/group_vars/*/vault.yml
 
 # ── Virtual machine and media artifacts ───────────────────
 *.vmdk
